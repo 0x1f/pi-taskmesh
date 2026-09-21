@@ -72,6 +72,19 @@ function readGlobalConfig(): JevGlobalConfig {
   }
 }
 
+function writeGlobalConfig(config: JevGlobalConfig): void {
+  const filename = globalConfigPath();
+  fs.mkdirSync(path.dirname(filename), { recursive: true });
+  const temp = `${filename}.tmp-${process.pid}`;
+  fs.writeFileSync(temp, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
+  fs.renameSync(temp, filename);
+  try {
+    fs.chmodSync(filename, 0o600);
+  } catch {
+    // Best effort on filesystems that do not support POSIX modes.
+  }
+}
+
 function secretPath(name: string): string {
   return path.join(agentDir(), "secrets", name);
 }
@@ -356,6 +369,35 @@ export class JevClient {
     this.providerOverride = normalizeProviderPreference(provider);
     this.typeSafeClient = null;
     this.typeSafeClientKey = null;
+  }
+
+  public persistProvider(provider: JevProviderPreference): void {
+    const normalized = normalizeProviderPreference(provider);
+    const config = readGlobalConfig();
+    config.provider = normalized;
+    writeGlobalConfig(config);
+    this.setProvider(normalized);
+  }
+
+  public persistApiKey(provider: JevProvider, key: string): string {
+    const trimmed = key.trim();
+    if (!trimmed) throw new Error("API key cannot be empty.");
+
+    const filename =
+      provider === "typesafe"
+        ? secretPath("typesafe_api_key")
+        : secretPath("ai_gateway_api_key");
+
+    fs.mkdirSync(path.dirname(filename), { recursive: true });
+    fs.writeFileSync(filename, trimmed + "\n", { mode: 0o600 });
+    try {
+      fs.chmodSync(filename, 0o600);
+    } catch {
+      // Best effort on filesystems that do not support POSIX modes.
+    }
+
+    this.setApiKey(trimmed, provider);
+    return filename;
   }
 
   public getProviderStatus(): JevProviderStatus {
