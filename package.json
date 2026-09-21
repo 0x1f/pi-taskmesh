@@ -58,12 +58,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0xlf/pi-jev-multi-provider.git"
+    "url": "git+https://github.com/0x1f/pi-jev-multi-provider.git"
   },
   "bugs": {
-    "url": "https://github.com/0xlf/pi-jev-multi-provider/issues"
+    "url": "https://github.com/0x1f/pi-jev-multi-provider/issues"
   },
-  "homepage": "https://github.com/0xlf/pi-jev-multi-provider#readme",
+  "homepage": "https://github.com/0x1f/pi-jev-multi-provider#readme",
   "author": "0xlf; based on pi-jev by Theophilo Damiao",
   "license": "MIT"
 }
