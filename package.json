@@ -1,0 +1,69 @@
+{
+  "name": "pi-jev-multi-provider",
+  "version": "0.5.1",
+  "description": "Full Jev System One integration for Pi with selectable Vercel AI Gateway or TypeSafe Direct transport",
+  "type": "module",
+  "main": "extensions/index.ts",
+  "bin": {
+    "pi-jev-gate": "./bin/jev-gate.js",
+    "jev-gate": "./bin/jev-gate.js"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi-coding-agent",
+    "typesafe",
+    "vercel",
+    "ai-gateway",
+    "jev",
+    "system-one",
+    "tool-router"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/index.ts"
+    ]
+  },
+  "files": [
+    "bin",
+    "extensions",
+    "src",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "smoke": "pi -ne -e ./extensions/index.ts -p --no-session \"list loaded tools\""
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "^0.6.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "@sinclair/typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^0.85.0",
+    "@earendil-works/pi-coding-agent": "^0.85.0",
+    "@earendil-works/pi-tui": "^0.85.0",
+    "@types/node": "^22.0.0",
+    "@sinclair/typebox": "^0.34.28",
+    "typescript": "^5.7.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xlf/pi-jev-multi-provider.git"
+  },
+  "bugs": {
+    "url": "https://github.com/0xlf/pi-jev-multi-provider/issues"
+  },
+  "homepage": "https://github.com/0xlf/pi-jev-multi-provider#readme",
+  "author": "0xlf; based on pi-jev by Theophilo Damiao",
+  "license": "MIT"
+}
