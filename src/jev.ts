@@ -12,7 +12,7 @@ import type {
 
 export type JevProvider = "typesafe" | "vercel";
 export type JevProviderPreference = JevProvider | "auto";
-export type ApiKeySource = "env" | "file" | "session";
+export type ApiKeySource = "env" | "file" | "config" | "session";
 
 export interface JevProviderStatus {
   preference: JevProviderPreference;
@@ -34,12 +34,46 @@ interface ResolvedProvider extends ResolvedCredential {
   model: string;
 }
 
+interface ProviderConfig {
+  apiKey?: string;
+  baseURL?: string;
+  model?: string;
+}
+
+interface JevGlobalConfig {
+  provider?: JevProviderPreference;
+  typesafe?: ProviderConfig;
+  vercel?: ProviderConfig;
+}
+
 const DEFAULT_TYPESAFE_MODEL = "jev-latest";
 const DEFAULT_VERCEL_MODEL = "typesafe-ai/jev";
 const DEFAULT_VERCEL_BASE_URL = "https://ai-gateway.vercel.sh/v4/ai";
 
+function agentDir(): string {
+  return process.env.PI_CODING_AGENT_DIR?.trim() || path.join(os.homedir(), ".pi", "agent");
+}
+
+function globalConfigPath(): string {
+  return path.join(agentDir(), "jev.json");
+}
+
+function readGlobalConfig(): JevGlobalConfig {
+  const filename = globalConfigPath();
+  if (!fs.existsSync(filename)) return {};
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filename, "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as JevGlobalConfig)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 function secretPath(name: string): string {
-  return path.join(os.homedir(), ".pi", "agent", "secrets", name);
+  return path.join(agentDir(), "secrets", name);
 }
 
 function readSecretFile(names: string[]): { key: string; origin: string } | null {
@@ -68,10 +102,17 @@ function normalizeProviderPreference(value: string | undefined): JevProviderPref
   );
 }
 
-function envProviderPreference(): JevProviderPreference {
-  return normalizeProviderPreference(
-    process.env.JEV_PROVIDER ?? process.env.PI_JEV_PROVIDER
-  );
+function envProviderPreference(): JevProviderPreference | null {
+  const raw = process.env.JEV_PROVIDER ?? process.env.PI_JEV_PROVIDER;
+  return raw?.trim() ? normalizeProviderPreference(raw) : null;
+}
+
+function configuredProviderPreference(): JevProviderPreference {
+  const fromEnv = envProviderPreference();
+  if (fromEnv) return fromEnv;
+
+  const configured = readGlobalConfig().provider;
+  return configured ? normalizeProviderPreference(configured) : "auto";
 }
 
 function normalizeVercelModel(model?: string): string {
@@ -104,9 +145,20 @@ function credentialFor(
     };
   }
 
+  const config = readGlobalConfig();
+
   if (provider === "typesafe") {
     const envKey = process.env.TYPESAFE_API_KEY?.trim();
     if (envKey) return { key: envKey, source: "env", origin: "$TYPESAFE_API_KEY" };
+
+    const configKey = config.typesafe?.apiKey?.trim();
+    if (configKey) {
+      return {
+        key: configKey,
+        source: "config",
+        origin: "~/.pi/agent/jev.json (typesafe.apiKey)",
+      };
+    }
 
     const file = readSecretFile(["typesafe_api_key"]);
     if (file) return { key: file.key, source: "file", origin: file.origin };
@@ -115,6 +167,15 @@ function credentialFor(
 
   const envKey = process.env.AI_GATEWAY_API_KEY?.trim();
   if (envKey) return { key: envKey, source: "env", origin: "$AI_GATEWAY_API_KEY" };
+
+  const configKey = config.vercel?.apiKey?.trim();
+  if (configKey) {
+    return {
+      key: configKey,
+      source: "config",
+      origin: "~/.pi/agent/jev.json (vercel.apiKey)",
+    };
+  }
 
   const file = readSecretFile(["ai_gateway_api_key", "vercel_ai_gateway_api_key"]);
   if (file) return { key: file.key, source: "file", origin: file.origin };
@@ -130,8 +191,8 @@ function resolveProvider(
     if (!credential) {
       const hint =
         preference === "typesafe"
-          ? "Set TYPESAFE_API_KEY or ~/.pi/agent/secrets/typesafe_api_key."
-          : "Set AI_GATEWAY_API_KEY or ~/.pi/agent/secrets/ai_gateway_api_key.";
+          ? "Set TYPESAFE_API_KEY, typesafe.apiKey in ~/.pi/agent/jev.json, or ~/.pi/agent/secrets/typesafe_api_key."
+          : "Set AI_GATEWAY_API_KEY, vercel.apiKey in ~/.pi/agent/jev.json, or ~/.pi/agent/secrets/ai_gateway_api_key.";
       throw new Error(`JEV_PROVIDER=${preference} is selected but no credential is configured. ${hint}`);
     }
     return {
@@ -161,8 +222,8 @@ function resolveProvider(
   }
 
   throw new Error(
-    "No Jev provider credentials found. Set TYPESAFE_API_KEY or AI_GATEWAY_API_KEY, " +
-      "or add ~/.pi/agent/secrets/typesafe_api_key / ai_gateway_api_key."
+    "No Jev provider credentials found. Configure ~/.pi/agent/jev.json, " +
+      "set TYPESAFE_API_KEY / AI_GATEWAY_API_KEY, or add a Pi Jev secret file."
   );
 }
 
@@ -174,7 +235,7 @@ export function resolveApiKeySource(): {
   provider: JevProvider;
 } | null {
   try {
-    const resolved = resolveProvider(envProviderPreference(), {});
+    const resolved = resolveProvider(configuredProviderPreference(), {});
     return {
       key: resolved.key,
       source: resolved.source,
@@ -288,7 +349,7 @@ export class JevClient {
   };
 
   public getProviderPreference(): JevProviderPreference {
-    return this.providerOverride ?? envProviderPreference();
+    return this.providerOverride ?? configuredProviderPreference();
   }
 
   public setProvider(provider: JevProviderPreference): void {
@@ -348,7 +409,8 @@ export class JevClient {
 
   private getTypeSafeClient(key: string): TypeSafeClient {
     if (!this.typeSafeClient || this.typeSafeClientKey !== key) {
-      const baseURL = process.env.TYPESAFE_BASE_URL?.trim();
+      const baseURL =
+        process.env.TYPESAFE_BASE_URL?.trim() || readGlobalConfig().typesafe?.baseURL?.trim();
       this.typeSafeClient = new TypeSafeClient({
         apiKey: key,
         ...(baseURL ? { baseURL } : {}),
@@ -376,7 +438,9 @@ export class JevClient {
 
     const statePayload: any =
       typeof request.state === "string" ? { text: request.state } : request.state;
-    const model = normalizeTypeSafeModel(request.model);
+    const model = normalizeTypeSafeModel(
+      request.model ?? readGlobalConfig().typesafe?.model
+    );
     const client = this.getTypeSafeClient(resolved.key);
 
     const response: any = await client.systemOne(
@@ -405,9 +469,12 @@ export class JevClient {
     model: string;
     usage?: any;
   }> {
-    const model = normalizeVercelModel(request.model);
+    const config = readGlobalConfig();
+    const model = normalizeVercelModel(request.model ?? config.vercel?.model);
     const baseURL = (
-      process.env.JEV_VERCEL_BASE_URL?.trim() || DEFAULT_VERCEL_BASE_URL
+      process.env.JEV_VERCEL_BASE_URL?.trim() ||
+      config.vercel?.baseURL?.trim() ||
+      DEFAULT_VERCEL_BASE_URL
     ).replace(/\/+$/, "");
 
     const response = await fetch(`${baseURL}/evaluation-model`, {
