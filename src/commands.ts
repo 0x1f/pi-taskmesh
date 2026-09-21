@@ -35,6 +35,84 @@ function providerLabel(status: JevProviderStatus): string {
   return status.preference === "auto" ? "auto (unresolved)" : status.preference;
 }
 
+
+const JEV_SUBCOMMANDS = [
+  { value: "status", description: "Show Jev provider and feature status" },
+  { value: "setup", description: "Persist provider and API key interactively" },
+  { value: "provider", description: "Switch provider for this Pi session" },
+  { value: "skills", description: "Discover relevant skills" },
+  { value: "test", description: "Run a Jev connectivity/evaluation test" },
+  { value: "enable", description: "Enable Jev tools in this session" },
+  { value: "disable", description: "Disable Jev tools in this session" },
+  { value: "auto", description: "Toggle automatic tool/skill routing" },
+  { value: "auto-model", description: "Toggle automatic model routing" },
+  { value: "tool-guard", description: "Toggle Jev tool-call guard" },
+  { value: "compact", description: "Toggle Jev-assisted compaction" },
+  { value: "agents", description: "Dispatch a task through Jev agent orchestration" },
+  { value: "auto-agents", description: "Toggle automatic agent orchestration" },
+  { value: "help", description: "Show Jev command help" },
+] as const;
+
+const PROVIDER_COMPLETIONS = [
+  { value: "vercel", description: "Vercel AI Gateway / typesafe-ai/jev" },
+  { value: "typesafe", description: "TypeSafe Direct / Jev" },
+  { value: "auto", description: "Auto-detect configured provider" },
+] as const;
+
+const TOGGLE_COMPLETIONS = [
+  { value: "on", description: "Enable" },
+  { value: "off", description: "Disable" },
+] as const;
+
+function jevArgumentCompletions(prefix: string) {
+  const normalized = prefix.trimStart();
+  const [subcommand = "", ...rest] = normalized.split(/\s+/);
+  const startedArgument = /\s/.test(normalized);
+
+  if (!startedArgument) {
+    const matches = JEV_SUBCOMMANDS.filter((item) =>
+      item.value.startsWith(subcommand.toLowerCase())
+    ).map((item) => ({
+      value: item.value,
+      label: item.value,
+      description: item.description,
+    }));
+    return matches.length > 0 ? matches : null;
+  }
+
+  const argument = rest.join(" ").toLowerCase();
+
+  if (subcommand === "setup" || subcommand === "provider") {
+    const matches = PROVIDER_COMPLETIONS.filter((item) =>
+      item.value.startsWith(argument)
+    ).map((item) => ({
+      value: `${subcommand} ${item.value}`,
+      label: item.value,
+      description: item.description,
+    }));
+    return matches.length > 0 ? matches : null;
+  }
+
+  if (
+    subcommand === "auto" ||
+    subcommand === "auto-model" ||
+    subcommand === "tool-guard" ||
+    subcommand === "compact" ||
+    subcommand === "auto-agents"
+  ) {
+    const matches = TOGGLE_COMPLETIONS.filter((item) =>
+      item.value.startsWith(argument)
+    ).map((item) => ({
+      value: `${subcommand} ${item.value}`,
+      label: item.value,
+      description: item.description,
+    }));
+    return matches.length > 0 ? matches : null;
+  }
+
+  return null;
+}
+
 export function registerJevCommands(
   pi: ExtensionAPI,
   jevClient: JevClient,
@@ -52,6 +130,7 @@ export function registerJevCommands(
   const guardMode = toolGuard ?? { enabled: false, setEnabled: () => {} };
   pi.registerCommand("jev", {
     description: "Manage Jev integration (provider, status, enable, disable, auto, test, skills)",
+    getArgumentCompletions: (prefix) => jevArgumentCompletions(prefix),
     handler: async (args: string, ctx: ExtensionCommandContext) => {
       const tokens = args.trim().split(/\s+/).filter(Boolean);
       const sub = (tokens[0] ?? "").toLowerCase();
