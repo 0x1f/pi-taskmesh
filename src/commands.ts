@@ -102,7 +102,7 @@ export function registerJevCommands(
           ctx.ui.notify(
             `Jev provider: ${status.preference} → ${providerLabel(status)}\n` +
               `Credential: ${status.keyOrigin ?? "not configured"}\n` +
-              `Persist with JEV_PROVIDER=auto|typesafe|vercel.`,
+              `Persist with ~/.pi/agent/jev.json or JEV_PROVIDER=auto|typesafe|vercel.`,
             status.configured ? "info" : "warning"
           );
           return;
@@ -138,7 +138,7 @@ export function registerJevCommands(
         if (!status.configured) {
           ctx.ui.notify(
             "Cannot run evaluation: no Jev provider credential. " +
-              "Set TYPESAFE_API_KEY (TypeSafe) or AI_GATEWAY_API_KEY (Vercel), " +
+              "Configure ~/.pi/agent/jev.json, set TYPESAFE_API_KEY / AI_GATEWAY_API_KEY, " +
               "or use ~/.pi/agent/secrets/typesafe_api_key / ai_gateway_api_key.",
             "error"
           );
