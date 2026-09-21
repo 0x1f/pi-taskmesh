@@ -26,6 +26,86 @@ pi remove git:github.com/0x1f/pi-goal-x-jev-gate
 
 Only remove packages that are actually present on your system.
 
+## Pi global configuration (recommended)
+
+You can configure the plugin globally without shell `export` statements.
+
+Create:
+
+```text
+~/.pi/agent/jev.json
+```
+
+For Vercel:
+
+```json
+{
+  "provider": "vercel",
+  "vercel": {
+    "apiKey": "your_vercel_ai_gateway_key"
+  }
+}
+```
+
+For TypeSafe Direct:
+
+```json
+{
+  "provider": "typesafe",
+  "typesafe": {
+    "apiKey": "ts_..."
+  }
+}
+```
+
+Or keep the key outside the JSON and only persist the provider:
+
+```json
+{
+  "provider": "vercel"
+}
+```
+
+with:
+
+```text
+~/.pi/agent/secrets/ai_gateway_api_key
+```
+
+This is the recommended layout for secrets.
+
+The plugin also supports optional provider-specific overrides:
+
+```json
+{
+  "provider": "vercel",
+  "vercel": {
+    "apiKey": "...",
+    "model": "typesafe-ai/jev",
+    "baseURL": "https://ai-gateway.vercel.sh/v4/ai"
+  },
+  "typesafe": {
+    "apiKey": "ts_...",
+    "model": "jev-latest",
+    "baseURL": "https://api.typesafe.ai"
+  }
+}
+```
+
+Provider selection precedence is:
+
+1. runtime `/jev provider ...`
+2. `JEV_PROVIDER` / `PI_JEV_PROVIDER`
+3. `~/.pi/agent/jev.json`
+4. `auto`
+
+Credential precedence is:
+
+1. in-session credential
+2. environment variable
+3. `~/.pi/agent/jev.json`
+4. Pi Jev secret file
+
 ## Provider setup
 
 ### Vercel AI Gateway
@@ -89,7 +169,7 @@ Inside Pi:
 /jev test
 ```
 
-The `/jev provider ...` command changes the provider for the current Pi session. Set `JEV_PROVIDER` to make the choice persistent across sessions.
+The `/jev provider ...` command changes the provider for the current Pi session. Use `~/.pi/agent/jev.json` to persist the choice without shell environment variables, or set `JEV_PROVIDER` if you prefer environment-based configuration.
 
 ## Full Jev feature set
 
