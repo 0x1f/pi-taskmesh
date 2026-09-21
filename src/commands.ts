@@ -408,7 +408,18 @@ export function registerJevCommands(
         }
         const enabled = arg === "on" ? true : arg === "off" ? false : !guardMode.enabled;
         guardMode.setEnabled(enabled);
-        ctx.ui.notify(`Jev tool guard ${enabled ? "enabled" : "disabled"}.`, "info");
+        try {
+          jevClient.persistFeature("toolGuard", enabled);
+          ctx.ui.notify(
+            `Jev tool guard ${enabled ? "enabled" : "disabled"} and saved globally.`,
+            "info"
+          );
+        } catch (err: any) {
+          ctx.ui.notify(
+            `Jev tool guard ${enabled ? "enabled" : "disabled"} for this session, but global save failed: ${err?.message || err}`,
+            "warning"
+          );
+        }
         return;
       }
 
@@ -420,7 +431,18 @@ export function registerJevCommands(
         }
         const enabled = arg === "on" ? true : arg === "off" ? false : !compactMode.enabled;
         compactMode.setEnabled(enabled);
-        ctx.ui.notify(`Jev compaction ${enabled ? "enabled" : "disabled"}. Use /compact to run it.`, "info");
+        try {
+          jevClient.persistFeature("compact", enabled);
+          ctx.ui.notify(
+            `Jev compaction ${enabled ? "enabled" : "disabled"} and saved globally. Use /compact to run it.`,
+            "info"
+          );
+        } catch (err: any) {
+          ctx.ui.notify(
+            `Jev compaction ${enabled ? "enabled" : "disabled"} for this session, but global save failed: ${err?.message || err}`,
+            "warning"
+          );
+        }
         return;
       }
 
@@ -432,7 +454,18 @@ export function registerJevCommands(
         }
         const enabled = arg === "on" ? true : arg === "off" ? false : !agentMode.enabled;
         agentMode.setEnabled(enabled);
-        ctx.ui.notify(`Automatic agent orchestration ${enabled ? "enabled" : "disabled"}.`, "info");
+        try {
+          jevClient.persistFeature("autoAgents", enabled);
+          ctx.ui.notify(
+            `Automatic agent orchestration ${enabled ? "enabled" : "disabled"} and saved globally.`,
+            "info"
+          );
+        } catch (err: any) {
+          ctx.ui.notify(
+            `Automatic agent orchestration ${enabled ? "enabled" : "disabled"} for this session, but global save failed: ${err?.message || err}`,
+            "warning"
+          );
+        }
         return;
       }
 
@@ -444,7 +477,18 @@ export function registerJevCommands(
         }
         const enabled = arg === "on" ? true : arg === "off" ? false : !modelMode.enabled;
         modelMode.setEnabled(enabled);
-        ctx.ui.notify(`Jev auto-model mode ${enabled ? "enabled" : "disabled"}.`, "info");
+        try {
+          jevClient.persistFeature("autoModel", enabled);
+          ctx.ui.notify(
+            `Jev auto-model mode ${enabled ? "enabled" : "disabled"} and saved globally.`,
+            "info"
+          );
+        } catch (err: any) {
+          ctx.ui.notify(
+            `Jev auto-model mode ${enabled ? "enabled" : "disabled"} for this session, but global save failed: ${err?.message || err}`,
+            "warning"
+          );
+        }
         return;
       }
 
@@ -456,12 +500,20 @@ export function registerJevCommands(
         }
         const enabled = arg === "on" ? true : arg === "off" ? false : !auto.enabled;
         auto.setEnabled(enabled);
-        ctx.ui.notify(
-          enabled
-            ? "Jev auto mode enabled: each prompt routes tools and suggests skills. Costs one Jev request per prompt."
-            : "Jev auto mode disabled.",
-          "info"
-        );
+        try {
+          jevClient.persistFeature("auto", enabled);
+          ctx.ui.notify(
+            enabled
+              ? "Jev auto mode enabled and saved globally: each prompt routes tools and suggests skills. Costs one Jev request per prompt."
+              : "Jev auto mode disabled and saved globally.",
+            "info"
+          );
+        } catch (err: any) {
+          ctx.ui.notify(
+            `Jev auto mode ${enabled ? "enabled" : "disabled"} for this session, but global save failed: ${err?.message || err}`,
+            "warning"
+          );
+        }
         return;
       }
 
