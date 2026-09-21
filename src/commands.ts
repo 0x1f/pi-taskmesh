@@ -57,7 +57,7 @@ export function registerJevCommands(
       const sub = (tokens[0] ?? "").toLowerCase();
       const rest = tokens.slice(1).join(" ");
       const usage =
-        "Available options: /jev status, /jev provider [auto|typesafe|vercel], /jev skills [query], /jev test [prompt], /jev enable, /jev disable, /jev auto [on|off], /jev auto-model [on|off], /jev compact [on|off], /jev auto-agents [on|off], /jev tool-guard [on|off], /jev agents [task]";
+        "Available options: /jev status, /jev setup [auto|typesafe|vercel], /jev provider [auto|typesafe|vercel], /jev skills [query], /jev test [prompt], /jev enable, /jev disable, /jev auto [on|off], /jev auto-model [on|off], /jev compact [on|off], /jev auto-agents [on|off], /jev tool-guard [on|off], /jev agents [task]";
 
       if (sub === "status" || sub === "") {
         const status = providerStatus(jevClient);
@@ -92,6 +92,82 @@ export function registerJevCommands(
 
       if (sub === "help") {
         ctx.ui.notify(`Jev commands:\n${usage}`, "info");
+        return;
+      }
+
+      if (sub === "setup" || sub === "configure" || sub === "config") {
+        const client = jevClient as any;
+        if (
+          typeof client.persistProvider !== "function" ||
+          typeof client.persistApiKey !== "function"
+        ) {
+          ctx.ui.notify("This pi-jev build does not support interactive setup.", "error");
+          return;
+        }
+
+        let selected = rest.trim().toLowerCase();
+        if (!selected) {
+          const choice = await ctx.ui.select("Jev provider", [
+            "Vercel AI Gateway",
+            "TypeSafe Direct",
+            "Auto-detect",
+          ]);
+          if (!choice) return;
+          selected =
+            choice === "Vercel AI Gateway"
+              ? "vercel"
+              : choice === "TypeSafe Direct"
+                ? "typesafe"
+                : "auto";
+        }
+
+        if (selected !== "auto" && selected !== "typesafe" && selected !== "vercel") {
+          ctx.ui.notify(
+            `Unknown Jev provider "${rest}". Use /jev setup auto|typesafe|vercel.`,
+            "warning"
+          );
+          return;
+        }
+
+        if (selected === "auto") {
+          client.persistProvider("auto");
+          const status = providerStatus(jevClient);
+          ctx.ui.notify(
+            status.configured
+              ? `Jev saved globally as auto → ${providerLabel(status)}.`
+              : "Jev saved globally as auto, but no provider credential is configured yet.",
+            status.configured ? "info" : "warning"
+          );
+          return;
+        }
+
+        const providerName =
+          selected === "vercel" ? "Vercel AI Gateway" : "TypeSafe Direct";
+        const placeholder =
+          selected === "vercel"
+            ? "AI Gateway API key (leave blank to keep existing)"
+            : "TypeSafe API key (leave blank to keep existing)";
+
+        const key = await ctx.ui.input(`${providerName} API key`, placeholder);
+        if (key === undefined || key === null) return;
+
+        client.persistProvider(selected as JevProviderPreference);
+
+        if (key.trim()) {
+          const filename = client.persistApiKey(selected, key);
+          ctx.ui.notify(
+            `Jev configured globally: ${providerName}. Credential saved to ${filename} with restricted permissions.`,
+            "info"
+          );
+        } else {
+          const status = providerStatus(jevClient);
+          ctx.ui.notify(
+            status.configured
+              ? `Jev provider saved globally as ${selected}; existing credential kept (${status.keyOrigin}).`
+              : `Jev provider saved globally as ${selected}, but no credential exists yet. Run /jev setup ${selected} again to add one.`,
+            status.configured ? "info" : "warning"
+          );
+        }
         return;
       }
 
