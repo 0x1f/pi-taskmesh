@@ -40,8 +40,19 @@ interface ProviderConfig {
   model?: string;
 }
 
+export type JevFeatureName = "auto" | "autoModel" | "toolGuard" | "compact" | "autoAgents";
+
+interface JevFeatureConfig {
+  auto?: boolean;
+  autoModel?: boolean;
+  toolGuard?: boolean;
+  compact?: boolean;
+  autoAgents?: boolean;
+}
+
 interface JevGlobalConfig {
   provider?: JevProviderPreference;
+  features?: JevFeatureConfig;
   typesafe?: ProviderConfig;
   vercel?: ProviderConfig;
 }
@@ -377,6 +388,16 @@ export class JevClient {
     config.provider = normalized;
     writeGlobalConfig(config);
     this.setProvider(normalized);
+  }
+
+  public getFeatureDefault(feature: JevFeatureName): boolean {
+    return readGlobalConfig().features?.[feature] ?? false;
+  }
+
+  public persistFeature(feature: JevFeatureName, enabled: boolean): void {
+    const config = readGlobalConfig();
+    config.features = { ...(config.features ?? {}), [feature]: enabled };
+    writeGlobalConfig(config);
   }
 
   public persistApiKey(provider: JevProvider, key: string): string {
