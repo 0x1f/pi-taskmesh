@@ -106,6 +106,35 @@ Credential precedence is:
 3. `~/.pi/agent/jev.json`
 4. Pi Jev secret file
 
+### Persistent feature defaults
+
+The runtime feature switches are also stored globally in `~/.pi/agent/jev.json`:
+
+```json
+{
+  "provider": "vercel",
+  "features": {
+    "auto": true,
+    "autoModel": false,
+    "toolGuard": false,
+    "compact": false,
+    "autoAgents": false
+  }
+}
+```
+
+You normally do not need to edit this JSON yourself. These commands update the current session **and** persist the new default for future Pi sessions/projects:
+
+```text
+/jev auto on
+/jev auto-model off
+/jev tool-guard off
+/jev compact off
+/jev auto-agents off
+```
+
+On the next `pi` launch, the saved feature values are used automatically. Environment/CLI flags remain available as temporary startup overrides.
+
 ## Provider setup
 
 ### Vercel AI Gateway
