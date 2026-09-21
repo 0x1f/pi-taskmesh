@@ -11,13 +11,20 @@ import { AgentOrchestrator } from "../src/orchestrator.js";
 import { JevAgentHandler } from "../src/agent.js";
 import { ToolGuard } from "../src/tool-guard.js";
 
-function envAutoEnabledFor(name: string): boolean {
+function envBooleanOverride(name: string): boolean | null {
   const raw = process.env[name]?.trim().toLowerCase();
-  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+  if (!raw) return null;
+  if (raw === "1" || raw === "true" || raw === "yes" || raw === "on") return true;
+  if (raw === "0" || raw === "false" || raw === "no" || raw === "off") return false;
+  return null;
 }
 
-function envAutoEnabled(): boolean {
-  return envAutoEnabledFor("PI_JEV_AUTO");
+function featureDefault(
+  jevClient: JevClient,
+  feature: "auto" | "autoModel" | "toolGuard" | "compact" | "autoAgents",
+  envName: string
+): boolean {
+  return envBooleanOverride(envName) ?? jevClient.getFeatureDefault(feature);
 }
 
 export default function (pi: ExtensionAPI) {
@@ -28,32 +35,32 @@ export default function (pi: ExtensionAPI) {
   pi.registerFlag("jev-agents", {
     description: "Enable explicit and automatic orchestration of available agents",
     type: "boolean",
-    default: envAutoEnabledFor("PI_JEV_AGENTS"),
+    default: featureDefault(jevClient, "autoAgents", "PI_JEV_AGENTS"),
   });
 
   pi.registerFlag("jev-tool-guard", {
     description: "Validate tool calls with Jev System One to prevent hallucinations",
     type: "boolean",
-    default: envAutoEnabledFor("PI_JEV_TOOL_GUARD"),
+    default: featureDefault(jevClient, "toolGuard", "PI_JEV_TOOL_GUARD"),
   });
 
   pi.registerFlag("jev-compact", {
     description: "Use Jev to preserve important tool history during /compact",
     type: "boolean",
-    default: envAutoEnabledFor("PI_JEV_COMPACT"),
+    default: featureDefault(jevClient, "compact", "PI_JEV_COMPACT"),
   });
 
   pi.registerFlag("jev-auto-model", {
     description: "Automatically choose a model for each prompt based on task needs",
     type: "boolean",
-    default: envAutoEnabledFor("PI_JEV_AUTO_MODEL"),
+    default: featureDefault(jevClient, "autoModel", "PI_JEV_AUTO_MODEL"),
   });
 
   pi.registerFlag("jev-auto", {
     description:
       "Automatically route Pi tools and suggest skills with Jev on every prompt (also via PI_JEV_AUTO=1)",
     type: "boolean",
-    default: envAutoEnabled(),
+    default: featureDefault(jevClient, "auto", "PI_JEV_AUTO"),
   });
 
   const auto = new AutoJev(
