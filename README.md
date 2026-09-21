@@ -156,6 +156,43 @@ chmod 600 ~/.pi/agent/secrets/typesafe_api_key ~/.pi/agent/secrets/ai_gateway_ap
 
 For Vercel, `~/.pi/agent/secrets/vercel_ai_gateway_api_key` is also recognized.
 
+## Configure entirely inside Pi
+
+After installing or updating the plugin, you can configure Jev without shell `export` commands:
+
+```text
+/jev setup
+```
+
+Pi will show a provider picker:
+
+- Vercel AI Gateway
+- TypeSafe Direct
+- Auto-detect
+
+For Vercel or TypeSafe, Pi then asks for the API key and persists it to the appropriate secret file with restricted permissions:
+
+```text
+~/.pi/agent/secrets/ai_gateway_api_key
+~/.pi/agent/secrets/typesafe_api_key
+```
+
+The selected provider is persisted in:
+
+```text
+~/.pi/agent/jev.json
+```
+
+You can also skip the picker:
+
+```text
+/jev setup vercel
+/jev setup typesafe
+/jev setup auto
+```
+
+The key is requested through Pi's UI input rather than being placed directly in the slash-command arguments.
+
 ## Runtime provider switching
 
 Inside Pi:
