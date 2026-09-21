@@ -29,8 +29,8 @@
     "extensions",
     "src",
     "README.md",
-    "LICENSE",
-    "SECURITY.md"
+    "README.zh-CN.md",
+    "LICENSE"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -64,6 +64,6 @@
     "url": "https://github.com/0x1f/pi-jev-multi-provider/issues"
   },
   "homepage": "https://github.com/0x1f/pi-jev-multi-provider#readme",
-  "author": "0xlf; based on pi-jev by Theophilo Damiao",
+  "author": "0x1f; based on pi-jev by Theophilo Damiao",
   "license": "MIT"
 }

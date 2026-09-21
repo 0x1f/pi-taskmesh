@@ -1,32 +1,34 @@
 # pi-jev-multi-provider
 
-为 [Pi coding agent](https://github.com/earendil-works/pi) 提供 Jev System One 结构化判断、工具路由和技能推荐，支持 **TypeSafe Direct** 与 **Vercel AI Gateway** 两种传输。
+**English** | [简体中文](README.zh-CN.md)
 
-本仓库由 `0x1f` 维护，保留 `0xlf/pi-jev-multi-provider` 的 Git 历史；源自 [TheoOliveira/pi-jev](https://github.com/TheoOliveira/pi-jev) 0.5.0。当前包版本为 **0.5.1**。
+Jev System One structured judgments, tool routing, and skill recommendations for the [Pi coding agent](https://github.com/earendil-works/pi), with **TypeSafe Direct** and **Vercel AI Gateway** transports.
 
-> 这里的“多 Provider”指 Jev 判断请求的服务商选择，并不是给 Pi 注册两个通用聊天模型。`auto` 按凭据选择服务商，不是请求失败后的自动容灾切换。
+Maintained by `0x1f`. Current package version: **0.5.1**.
 
-## 快速开始
+> “Multi-provider” means choosing the service used for Jev evaluations. This extension does not register two general-purpose chat models in Pi. `auto` selects a provider by available credentials; it does not fail over after a request fails.
 
-### 1. 安装
+## Quick start
 
-需要已安装的 Pi、Git，以及满足 Pi 自身要求的 Node.js。此扩展的 `package.json` 声明 Node.js `>=20`；Pi 的版本要求可能更高。开发依赖以 Pi `^0.85.0` 为基线，不代表所有 Pi 版本都已验证兼容。
+### 1. Install
+
+You need Pi, Git, and a Node.js version supported by your Pi installation. This extension declares Node.js `>=20`; Pi itself may require a newer version. Development dependencies target Pi `^0.85.0`, which does not imply compatibility with every Pi release.
 
 ```bash
 pi install git:github.com/0x1f/pi-jev-multi-provider
 ```
 
-安装后重启 Pi；在已运行的会话中可尝试 `/reload`。如需固定版本，可使用 `git:github.com/0x1f/pi-jev-multi-provider@<commit>`，将 `<commit>` 替换为实际提交 SHA。
+Restart Pi after installation, or try `/reload` in an existing session. To pin a revision, use `git:github.com/0x1f/pi-jev-multi-provider@<commit>`, replacing `<commit>` with an actual commit SHA.
 
-若装过旧仓库版本，先运行 `pi list`，再按显示的源地址移除旧条目并安装本仓库；不会自动迁移旧安装地址。也请检查是否同时启用了其他 Jev 路由扩展，避免重复工具和自动请求。**不要批量移除无关扩展。**
+If you installed an older repository version, run `pi list`, remove its exact source entry, and install this repository. Old installation URLs are not migrated automatically. Check for other enabled Jev routers to avoid duplicate tools and automatic requests. **Do not remove unrelated extensions.**
 
-### 2. 在 Pi 中配置
+### 2. Configure inside Pi
 
 ```text
 /jev setup
 ```
 
-选择 `Vercel AI Gateway`、`TypeSafe Direct` 或 `Auto-detect`。也可直接指定：
+Choose `Vercel AI Gateway`, `TypeSafe Direct`, or `Auto-detect`. You can also specify the provider directly:
 
 ```text
 /jev setup vercel
@@ -34,33 +36,33 @@ pi install git:github.com/0x1f/pi-jev-multi-provider
 /jev setup auto
 ```
 
-- `vercel` / `typesafe` 通过 UI 输入密钥；留空则保留现有凭据，取消则退出。
-- `auto` 只保存自动选择偏好，不会索取或生成密钥。
-- Provider 偏好写入全局 `jev.json`，密钥写入对应 secret 文件；代码设置 `0600` 权限，在不支持 POSIX 权限的文件系统上仅作尽力处理。
-- 密钥输入使用普通 `ctx.ui.input()`，不要假定输入会被掩码；避免在录屏或共享终端中输入密钥，也不要把它放进聊天消息或 slash 命令参数。
+- `vercel` / `typesafe` prompt for a key. Leave it blank to keep existing credentials, or cancel to exit.
+- `auto` only saves the provider preference; it does not request or generate a key.
+- The provider preference is saved in the global `jev.json`; keys go into the corresponding secret files. The code sets `0600` permissions, with best-effort handling on filesystems without POSIX modes.
+- Key entry uses ordinary `ctx.ui.input()`. Do not assume the input is masked; avoid entering keys while recording or sharing your terminal, and do not put keys in chat messages or slash-command arguments.
 
-### 3. 检查状态与连通性
+### 3. Check configuration and connectivity
 
 ```text
 /jev status
 /jev test
 ```
 
-`status` 只检查配置及会话统计，**不是联网验证**。`test` 会向选中的 Jev 服务发送固定示例，可能产生费用。配置完成后，三个 Jev 工具可按需使用；五项自动/辅助功能默认均关闭。
+`status` checks configuration and session statistics; it is **not a network test**. `test` sends a fixed example to the selected Jev service and may incur charges. Once configured, the three Jev tools can be used on demand. All five automatic/auxiliary features are off by default.
 
-## Provider 与配置
+## Providers and configuration
 
-| 选择 | 默认模型 | 凭据环境变量 | 传输 |
+| Selection | Default model | Credential environment variable | Transport |
 | --- | --- | --- | --- |
-| `typesafe` | `jev-latest` | `TYPESAFE_API_KEY` | `@typesafe-ai/sdk` 的 `systemOne()` |
-| `vercel` | `typesafe-ai/jev` | `AI_GATEWAY_API_KEY` | 原生 `fetch()` 调用 Gateway evaluation-model 协议 |
-| `auto` | 随选中的 Provider | 上述任一变量或其他凭据来源 | 有 TypeSafe 凭据优先 TypeSafe，否则 Vercel |
+| `typesafe` | `jev-latest` | `TYPESAFE_API_KEY` | `systemOne()` from `@typesafe-ai/sdk` |
+| `vercel` | `typesafe-ai/jev` | `AI_GATEWAY_API_KEY` | Native `fetch()` using the Gateway evaluation-model protocol |
+| `auto` | Depends on the selected provider | Either variable or another credential source | TypeSafe when its credentials exist; otherwise Vercel |
 
-两个 Provider 都没有凭据时为未配置状态。显式选择的 Provider 缺少凭据，或 `auto` 选中的 Provider 请求失败时，**不会自动改用另一个 Provider**。
+With no credentials, Jev is unconfigured. If an explicitly selected provider lacks credentials, or a provider chosen by `auto` fails a request, **the client does not automatically switch providers**.
 
-### 全局配置与 secret 文件
+### Global configuration and secret files
 
-默认路径如下；设置 `PI_CODING_AGENT_DIR` 可改变此扩展的配置根目录。
+Default paths are shown below. Set `PI_CODING_AGENT_DIR` to change this extension's configuration root.
 
 ```text
 ~/.pi/agent/
@@ -70,9 +72,9 @@ pi install git:github.com/0x1f/pi-jev-multi-provider
     └── ai_gateway_api_key
 ```
 
-Vercel 还兼容 `secrets/vercel_ai_gateway_api_key`，优先读取 `ai_gateway_api_key`。
+Vercel also accepts `secrets/vercel_ai_gateway_api_key`; `ai_gateway_api_key` takes precedence.
 
-建议将密钥独立保存，`jev.json` 只记录偏好和功能开关。例如以下是**显式启用自动路由**的配置，不是出厂默认值：
+Keep keys in separate files and use `jev.json` for preferences and feature switches. This example **explicitly enables automatic routing**; it is not the factory default:
 
 ```json
 {
@@ -87,11 +89,11 @@ Vercel 还兼容 `secrets/vercel_ai_gateway_api_key`，优先读取 `ai_gateway_
 }
 ```
 
-也支持在 JSON 中配置 `typesafe.apiKey` / `vercel.apiKey`，但独立 secret 文件更便于权限和备份管理；两种方式都属于**本地明文存储**。
+JSON credentials at `typesafe.apiKey` / `vercel.apiKey` are also supported. Separate secret files simplify permissions and backup management, but both options are **local plaintext storage**.
 
-### 环境变量方式
+### Environment variables
 
-二选一，在启动 Pi 的 shell 中配置。以下密钥是占位符；真实凭据建议通过 `/jev setup` 或可信的密钥管理方式提供，避免写入 shell 历史。
+Choose one provider in the shell used to start Pi. These keys are placeholders; supply real credentials through `/jev setup` or a trusted credential manager rather than writing them into shell history.
 
 ```bash
 export JEV_PROVIDER=vercel
@@ -103,20 +105,20 @@ export JEV_PROVIDER=typesafe
 export TYPESAFE_API_KEY="YOUR_TYPESAFE_KEY"
 ```
 
-Provider 选择优先级：
+Provider selection precedence:
 
-1. 当前 `JevClient` 的会话覆盖值（`/jev provider`，或 `/jev setup` 保存时设置）。
-2. `JEV_PROVIDER`，未设置时使用兼容变量 `PI_JEV_PROVIDER`。
-3. 全局 `jev.json` 的 `provider`。
-4. `auto`。
+1. The current `JevClient` session override, set by `/jev provider` or when `/jev setup` saves a choice.
+2. `JEV_PROVIDER`, or the compatibility alias `PI_JEV_PROVIDER` when the former is unset.
+3. `provider` in the global `jev.json`.
+4. `auto`.
 
-每个 Provider 内部的密钥优先级：**会话密钥 → 环境变量 → `jev.json` → secret 文件**。
+Credential precedence within each provider: **session key → environment variable → `jev.json` → secret file**.
 
-因此 `/jev setup` 新保存的密钥在当前会话优先，但重启后，旧环境变量或 JSON 中的密钥仍可能覆盖 secret 文件。以 `/jev status` 的凭据来源为准。环境变量也会在重启后覆盖保存的 Provider 偏好。
+A key saved by `/jev setup` takes precedence in the current session. After restarting, an old environment variable or JSON key can override that secret file. Check the credential source in `/jev status`. Environment variables also override the saved provider preference after restarting.
 
-### 模型与端点覆盖
+### Model and endpoint overrides
 
-可在 `jev.json` 中加入以下字段（与已有配置合并，不要覆盖需要保留的开关）：
+Merge these fields into `jev.json` without overwriting feature switches you want to keep:
 
 ```json
 {
@@ -131,26 +133,26 @@ Provider 选择优先级：
 }
 ```
 
-- 模型优先级：单次请求的 `model` → 对应 Provider 的 JSON `model` → 默认模型。
-- TypeSafe 自定义端点：`TYPESAFE_BASE_URL` → `typesafe.baseURL` → SDK 默认值。
-- Vercel 自定义端点：`JEV_VERCEL_BASE_URL` → `vercel.baseURL` → `https://ai-gateway.vercel.sh/v4/ai`。
-- Vercel 会在根地址后追加 `/evaluation-model`，不要重复写入该后缀。此接口不是 OpenAI Chat Completions 接口。
-- 默认模型名会在两种协议间归一化；自定义模型是否可用取决于服务端。
-- `/jev status` 当前显示的是 Provider 默认模型，不一定反映 JSON 或单次请求的模型覆盖。
+- Model precedence: request-level `model` → provider-specific JSON `model` → default model.
+- TypeSafe endpoint: `TYPESAFE_BASE_URL` → `typesafe.baseURL` → SDK default.
+- Vercel endpoint: `JEV_VERCEL_BASE_URL` → `vercel.baseURL` → `https://ai-gateway.vercel.sh/v4/ai`.
+- Vercel appends `/evaluation-model` to the root URL; do not include that suffix twice. This is not an OpenAI Chat Completions endpoint.
+- Default model names are normalized between the two protocols. Custom model availability depends on the service.
+- `/jev status` currently displays the provider's default model, not necessarily a JSON or request-level override.
 
-只将端点设为可信地址：请求内容及认证密钥会发送给该地址。
+Only use trusted endpoints: request content and authentication credentials are sent to the configured address.
 
-## 三个工具
+## Three tools
 
-| 工具 | 行为 |
+| Tool | Behavior |
 | --- | --- |
-| `jev_find_tools` | 从已经注册但未激活的工具中筛选候选，通过 Jev 判断后增量激活；不会安装工具或移除当前工具。 |
-| `jev_find_skill` | 推荐当前 Pi 已发现的技能及路径；不会自动执行技能，需读取 `SKILL.md` 或调用对应技能命令。 |
-| `jev_evaluate` | 对 `state` 提交 `choice`、`noul`、`score` 问题，返回结构化结果，而不是自由文本回答。 |
+| `jev_find_tools` | Shortlists registered but inactive tools, evaluates them with Jev, and activates matches additively. It does not install tools or remove currently active ones. |
+| `jev_find_skill` | Recommends skills already discovered by Pi and their paths. It does not execute skills; read the `SKILL.md` or invoke the corresponding skill command. |
+| `jev_evaluate` | Submits `choice`, `noul`, or `score` questions about a `state` and returns structured judgments rather than free-form text. |
 
-工具和技能筛选的默认阈值为源码常量 `JEV_THRESHOLD = 0.65`，不是环境变量；手动工具调用可传 `threshold` 覆盖。
+The default tool/skill threshold is the source constant `JEV_THRESHOLD = 0.65`, not an environment variable. Manual tool calls can override it with `threshold`.
 
-`jev_evaluate` 的调用参数示例：
+Example arguments for `jev_evaluate`:
 
 ```json
 {
@@ -175,36 +177,36 @@ Provider 选择优先级：
 }
 ```
 
-`noul` 表达是/否概率；`choice` 的 `criteria` 是选项到描述的对象；`score` 的 `criteria` 是评分等级字符串数组。返回答案包含 `type`、`value`，并按服务端响应提供 `confidence` / `distribution` 等字段。概率是模型判断，不能当作事实证明或权限授权。
+`noul` represents a yes/no probability. `choice` uses an object mapping option keys to descriptions for `criteria`; `score` uses an array of rubric-level strings. Answers contain `type` and `value`, with fields such as `confidence` / `distribution` when provided by the service. Model probabilities are not proof of facts or permission grants.
 
-### 路由的实际边界
+### Routing limitations
 
-先做本地关键词候选筛选，再交给 Jev：工具最多 **10** 个候选，技能最多 **12** 个。关键词按 ASCII 字母和数字拆分；纯中文查询可能取目录中的前几个条目，相关工具若未进入候选集就不会被 Jev 评估。可在查询中补充工具名或英文技术关键词。
+Local keyword shortlisting happens before Jev evaluation: at most **10 tools** and **12 skills** are considered. Keywords are split using ASCII letters and digits. A Chinese-only query may therefore select the first few directory entries; relevant tools outside the shortlist will not be evaluated. Including tool names or English technical keywords can help.
 
-未配置或请求失败时，手动工具路由不激活任何候选；技能查询可返回关键词匹配结果，概率记为 `0` 并标记 fallback，并非有效的 Jev 概率。未配置时，自动路由整体跳过。
+When unconfigured or offline, manual tool routing does not activate candidates. Skill lookup may return keyword matches marked as fallback with probability `0`; these are not valid Jev probabilities. Automatic routing is skipped entirely when unconfigured.
 
-## 命令与功能开关
+## Commands and feature switches
 
-| 命令 | 作用 / 持久性 |
+| Command | Purpose / persistence |
 | --- | --- |
-| `/jev`、`/jev status` | 查看 Provider、凭据来源、功能状态及成功请求统计。 |
-| `/jev setup [auto\|typesafe\|vercel]` | 交互配置，保存到全局。 |
-| `/jev provider [auto\|typesafe\|vercel]` | 查看或切换当前会话 Provider，不持久化。 |
-| `/jev test` | 向 Jev 发送固定示例。 |
-| `/jev test <prompt>` | 先调用 Pi 当前聊天模型设计问题，再调用 Jev；两者都需要凭据，均可能计费。 |
-| `/jev skills [query]` | 无参数列出技能，有参数筛选技能。 |
-| `/jev enable`、`/jev disable` | 只改变三个 Jev 工具的会话激活状态。 |
-| `/jev auto [on\|off]` | 每次 prompt 前自动路由工具和推荐技能。 |
-| `/jev auto-model [on\|off]` | 按本地任务规则选择 Pi 聊天模型，不调用 Jev 判断模型。 |
-| `/jev tool-guard [on\|off]` | 用 Jev 判断工具参数是否疑似虚构，并辅助分类工具错误。 |
-| `/jev compact [on\|off]` | 在 Pi 压缩上下文时提供 Jev 筛选的历史摘录。 |
-| `/jev auto-agents [on\|off]` | 开关自动 agent 编排。 |
-| `/jev agents <task>` | 显式提交编排任务，需要兼容的 `pi-subagents`。 |
-| `/jev help` | 查看内置帮助。 |
+| `/jev`, `/jev status` | Show provider, credential source, feature status, and successful-request statistics. |
+| `/jev setup [auto\|typesafe\|vercel]` | Interactive setup saved globally. |
+| `/jev provider [auto\|typesafe\|vercel]` | Inspect or switch the current session's provider without persisting it. |
+| `/jev test` | Send a fixed example to Jev. |
+| `/jev test <prompt>` | Ask Pi's current chat model to design questions, then call Jev. Both need credentials and may incur charges. |
+| `/jev skills [query]` | List skills without a query, or find matching skills with one. |
+| `/jev enable`, `/jev disable` | Change only the three Jev tools' session activation state. |
+| `/jev auto [on\|off]` | Route tools and recommend skills before each prompt. |
+| `/jev auto-model [on\|off]` | Select a Pi chat model with local rules, not a Jev model-selection judgment. |
+| `/jev tool-guard [on\|off]` | Use Jev to detect apparently fabricated tool arguments and classify tool errors. |
+| `/jev compact [on\|off]` | Supply Jev-selected history excerpts during Pi context compaction. |
+| `/jev auto-agents [on\|off]` | Toggle automatic agent orchestration. |
+| `/jev agents <task>` | Explicitly dispatch a workflow through compatible `pi-subagents`. |
+| `/jev help` | Show built-in command help. |
 
-五个功能开关无参数时是**切换**，不是查询；修改立即生效，并保存为之后所有项目/会话的全局默认值。保存失败会提示，当前会话的修改仍然有效。
+Calling one of the five feature-switch commands without `on` or `off` **toggles it**; it does not query its state. Changes apply immediately and are saved as global defaults for future sessions/projects. If saving fails, a warning is shown and the session change still applies.
 
-| JSON 字段 | 环境变量 | 启动参数 |
+| JSON field | Environment variable | Startup flag |
 | --- | --- | --- |
 | `features.auto` | `PI_JEV_AUTO` | `--jev-auto` |
 | `features.autoModel` | `PI_JEV_AUTO_MODEL` | `--jev-auto-model` |
@@ -212,13 +214,13 @@ Provider 选择优先级：
 | `features.compact` | `PI_JEV_COMPACT` | `--jev-compact` |
 | `features.autoAgents` | `PI_JEV_AGENTS` | `--jev-agents` |
 
-未配置的开关默认 `false`。环境变量接受 `1/true/yes/on` 与 `0/false/no/off`，覆盖保存的启动默认值；Pi 的对应 CLI flag 可进一步覆盖启动值。
+Unset switches default to `false`. Environment variables accept `1/true/yes/on` and `0/false/no/off`, overriding saved startup defaults. Pi's corresponding CLI flags can further override startup values.
 
-**当前自动模型选择和自动 agent 编排都在 `auto` 的事件入口内，因此还需 `/jev auto on`。** 显式 `/jev agents <task>` 不要求打开 `auto` 或 `auto-agents`。
+**Automatic model selection and automatic agent orchestration currently run inside the `auto` event entrypoint, so they also require `/jev auto on`.** Explicit `/jev agents <task>` does not require `auto` or `auto-agents` to be enabled.
 
-自动路由分别请求工具和技能判断，两类均有候选时会发起 **2 次 Jev 调用**，不是固定每次 prompt 1 次；tool guard、编排和压缩还可能增加请求。
+Automatic routing evaluates tools and skills separately. When both have candidates, this makes **2 Jev calls**, not a fixed one call per prompt. Tool guard, orchestration, and compaction may add further requests.
 
-已有权限系统或专用压缩器时，可从以下组合开始：
+If you already have a permission system or dedicated compactor, start with:
 
 ```text
 /jev enable
@@ -229,26 +231,26 @@ Provider 选择优先级：
 /jev auto-agents off
 ```
 
-`/jev disable` **不是总停用开关**，不会关闭事件钩子。要停止这些自动功能，应将上面五个开关都设为 `off`；完全卸载则使用 `pi remove` 并重启 Pi。
+`/jev disable` **is not a master off switch** and does not disable event hooks. Set all five feature switches above to `off` to stop those automatic features. To unload the extension entirely, use `pi remove` and restart Pi.
 
-## 可选集成与限制
+## Optional integrations and limitations
 
-### Agent 编排
+### Agent orchestration
 
-通过 `subagents:rpc:v1:request` 事件协议与兼容的 `pi-subagents` 集成；这个扩展**不包含子代理执行器**。根据工作流需提供 `scout`、`worker`、`reviewer`、`researcher`、`evidence-auditor` 等 agent 定义。无兼容监听器时，提交约 10 秒后超时。
+Integration uses the `subagents:rpc:v1:request` event protocol with a compatible `pi-subagents` extension. This package **does not include a subagent executor**. Depending on the workflow, provide agent definitions such as `scout`, `worker`, `reviewer`, `researcher`, and `evidence-auditor`. Without a compatible listener, dispatch times out after about 10 seconds.
 
-Jev 用于选择 implementation / research / review / general 工作流；未配置或判断失败时退回本地关键词分类。`agent: "jev"` / `"typesafe-jev"` 则处理结构化判断请求，不是通用编码 agent。
+Jev selects an implementation / research / review / general workflow, falling back to local keyword classification when unavailable. Requests targeting `agent: "jev"` / `"typesafe-jev"` perform structured judgments; they are not general-purpose coding agents.
 
-### Tool guard 与压缩
+### Tool guard and compaction
 
-- Tool guard 仅看工具名与参数，并不验证文件实际存在；疑似虚构概率达到 `0.85` 时阻止调用。评估异常时**放行**，所以它不能替代沙箱、权限控制或确定性校验。
-- 压缩当前只考虑 `branchEntries` 的**前 24 条**，每条序列化后截取 **900 字符**，保留阈值为 `0.55`。这是有限摘录，不是完整语义摘要；长会话应谨慎启用，避免遗漏关键上下文。
+- Tool guard evaluates only the tool name and arguments, not actual filesystem existence. It blocks calls when the probability of fabricated parameters reaches `0.85`. Evaluation errors **fail open**, so it cannot replace sandboxing, permissions, or deterministic validation.
+- Compaction currently considers the **first 24** `branchEntries`, serializes and truncates each to **900 characters**, and uses a retention threshold of `0.55`. This is a bounded excerpt, not a complete semantic summary. Use it cautiously in long sessions to avoid losing important context.
 
 ### Gate CLI
 
-包声明了 `pi-jev-gate` 和 `jev-gate` 两个 bin，评估传入文本/文件/diff 是否满足标准，默认通过阈值 `0.7`。它不会实际运行测试，也不会从模型概率证明测试通过。
+The package declares `pi-jev-gate` and `jev-gate` bins. They evaluate whether supplied text, a file, or a diff meets a criterion, with a default passing probability of `0.7`. They do not run tests or prove test success through a model probability.
 
-**当前打包限制：** `bin/jev-gate.js` 固定使用 `node --import tsx` 启动，但 `package.json` 没有声明 `tsx` 依赖，不能假定全新安装后 CLI 可直接运行。需要使用 CLI 时，可在源码目录显式准备加载器：
+**Current packaging limitation:** `bin/jev-gate.js` always launches with `node --import tsx`, but `package.json` does not declare `tsx`. Do not assume the CLI works in a fresh installation. To use it from a source checkout, explicitly prepare the loader:
 
 ```bash
 npm install
@@ -257,35 +259,25 @@ node ./bin/jev-gate.js --help
 node ./bin/jev-gate.js --criteria "The supplied text explains installation and configuration." --file README.md --json
 ```
 
-最后一条会把文件内容发送到选中的 Jev 服务。支持 `--diff`（读取 `git diff HEAD`，不含未跟踪文件）、`--file` 和 stdin。正常评估通过退出 `0`，不通过退出 `1`，runner 捕获的配置/API 等异常退出 `2`；`--fail-open` 会将捕获的异常改为成功退出，不宜用于强制验收。启动器自身异常不应被当作有效判定。
+The last command sends the file content to the selected Jev service. Inputs include `--diff` (`git diff HEAD`, excluding untracked files), `--file`, and stdin. Normal evaluations exit `0` when passing and `1` when failing; configuration/API and other errors caught by the runner exit `2`. `--fail-open` turns caught errors into successful exits and is unsuitable for mandatory acceptance checks. Launcher failures should not be treated as valid judgments.
 
-CLI 创建独立的 `JevClient`，读取环境变量和全局配置，不继承另一 Pi 进程中 `/jev provider` 的临时选择。
+The CLI creates its own `JevClient`, reading environment variables and global configuration. It does not inherit a temporary `/jev provider` selection from another Pi process.
 
-## 协议、数据与安全
+## Code structure
 
-所有 Jev 判断路径汇入 [`src/jev.ts`](src/jev.ts) 的 `JevClient.evaluate()`。Vercel 路径不依赖 `ai` SDK，但整个扩展仍依赖 `@typesafe-ai/sdk`。
-
-Vercel 协议映射：`noul` → `boolean` 请求；响应 `probability` → `noul.value`；Choice/Score 的 `probabilities` → `distribution`；`providerMetadata.typesafe.confidence` 用于补充置信度。Gateway HTTP 错误正文会替换当前密钥的精确字符串并截断；这**不等于所有日志、错误或请求内容都已脱敏**。
-
-根据启用的功能，发送的数据可能包括任务提示、工具/技能描述、工具参数、错误输出、会话历史片段，或 gate 输入文件和 diff。不要提交密码、私钥或未获准外发的代码；服务端的数据保留政策需另行核实。Pi 扩展以本机用户权限运行，安装前应审阅源码。
-
-[`SECURITY.md`](SECURITY.md) 沿用上游的安全报告联系方式，不代表 `0x1f` 的独立安全响应承诺；不要在公开 Issue 中提交敏感凭据。
-
-## 代码结构
-
-| 路径 | 职责 |
+| Path | Responsibility |
 | --- | --- |
-| [`extensions/index.ts`](extensions/index.ts) | 注册工具、命令、启动参数和生命周期钩子。 |
-| [`src/jev.ts`](src/jev.ts) | Provider/凭据解析、全局配置、两种传输和响应归一化。 |
-| [`src/router.ts`](src/router.ts)、[`src/skills.ts`](src/skills.ts)、[`src/auto.ts`](src/auto.ts) | 候选筛选、增量激活、技能推荐和自动调度。 |
-| [`src/tools.ts`](src/tools.ts)、[`src/commands.ts`](src/commands.ts) | 工具参数与 `/jev` 命令。 |
-| [`src/designer.ts`](src/designer.ts) | 使用当前 Pi 模型设计结构化评估问题。 |
-| [`src/model-router.ts`](src/model-router.ts) | 本地模型选择及部分 HTTP 错误后的短期避让。 |
-| [`src/agent.ts`](src/agent.ts)、[`src/orchestrator.ts`](src/orchestrator.ts) | Jev agent RPC 和多 agent 工作流。 |
-| [`src/tool-guard.ts`](src/tool-guard.ts)、[`src/compact.ts`](src/compact.ts) | 可选参数判断及有限历史压缩。 |
-| [`src/gate.ts`](src/gate.ts)、[`bin/jev-gate.js`](bin/jev-gate.js) | 评估型 CLI gate 与启动器。 |
+| [`extensions/index.ts`](extensions/index.ts) | Tools, commands, startup flags, and lifecycle hooks. |
+| [`src/jev.ts`](src/jev.ts) | Provider/credential resolution, global configuration, transports, and response normalization. |
+| [`src/router.ts`](src/router.ts), [`src/skills.ts`](src/skills.ts), [`src/auto.ts`](src/auto.ts) | Shortlisting, additive activation, skill recommendations, and automatic dispatch. |
+| [`src/tools.ts`](src/tools.ts), [`src/commands.ts`](src/commands.ts) | Tool parameters and `/jev` commands. |
+| [`src/designer.ts`](src/designer.ts) | Evaluation design using the current Pi model. |
+| [`src/model-router.ts`](src/model-router.ts) | Local model selection and temporary avoidance after some HTTP errors. |
+| [`src/agent.ts`](src/agent.ts), [`src/orchestrator.ts`](src/orchestrator.ts) | Jev agent RPC and multi-agent workflows. |
+| [`src/tool-guard.ts`](src/tool-guard.ts), [`src/compact.ts`](src/compact.ts) | Optional argument checks and bounded history compaction. |
+| [`src/gate.ts`](src/gate.ts), [`bin/jev-gate.js`](bin/jev-gate.js) | Evaluation-based gate CLI and launcher. |
 
-## 开发与验证范围
+## Development and verification scope
 
 ```bash
 git clone https://github.com/0x1f/pi-jev-multi-provider.git
@@ -294,14 +286,6 @@ npm install
 npm run typecheck
 ```
 
-包另有 `npm run smoke`，它会启动 Pi 并发送 prompt，可能使用本机模型凭据、触发网络请求和费用；不是离线单元测试。`typecheck` 当前不覆盖 `bin/jev-gate-runner.ts`。本版未附独立测试套件或依赖锁文件。
+The package also has `npm run smoke`, which starts Pi and submits a prompt. It may use local model credentials, make network requests, and incur charges; it is not an offline unit test. `typecheck` currently excludes `bin/jev-gate-runner.ts`. This version does not include a standalone test suite or dependency lockfile.
 
-本次文档整理依据源代码静态核对，并非 TypeSafe/Vercel 实网兼容性或安全性认证；没有运行付费推理、`smoke` 或编排任务。部署前请在自己的受控环境中验证所选 Pi 版本和 Provider。
-
-## 来源与许可证
-
-- 原始实现：[TheoOliveira/pi-jev](https://github.com/TheoOliveira/pi-jev)，Theophilo Damiao。
-- 多 Provider 改造来源：`0xlf/pi-jev-multi-provider`，迁入基线提交 `a03be3222a75fb63696b8971e6cc484aa750a236`，保留于本仓库历史。
-- 当前独立仓库：[0x1f/pi-jev-multi-provider](https://github.com/0x1f/pi-jev-multi-provider)。GitHub 账号变更不意味着 npm 包所有权转移或新版本已发布。
-
-采用 [MIT License](LICENSE)，保留原作者版权声明。
+This documentation was checked against source code, not certified through live TypeSafe/Vercel compatibility or security testing. No paid inference, `smoke`, or orchestration tasks were run for this documentation update. Validate your chosen Pi version and provider in a controlled environment before deployment.
