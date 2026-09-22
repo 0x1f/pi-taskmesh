@@ -1,6 +1,6 @@
 {
   "name": "pi-jev-multi-provider",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Full Jev System One integration for Pi with selectable Vercel AI Gateway or TypeSafe Direct transport",
   "type": "module",
   "main": "extensions/index.ts",
@@ -34,6 +34,7 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "tsc --noEmit false --outDir .test-build && node .test-build/test/persistence.js",
     "smoke": "pi -ne -e ./extensions/index.ts -p --no-session \"list loaded tools\""
   },
   "engines": {

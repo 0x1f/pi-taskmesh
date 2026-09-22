@@ -4,7 +4,7 @@
 
 为 [Pi coding agent](https://github.com/earendil-works/pi) 提供 Jev System One 结构化判断、工具路由和技能推荐，支持 **TypeSafe Direct** 与 **Vercel AI Gateway** 两种传输。
 
-本仓库由 `0x1f` 维护，当前包版本为 **0.5.1**。
+本仓库由 `0x1f` 维护，当前包版本为 **0.5.2**。
 
 > 这里的“多 Provider”指 Jev 判断请求的服务商选择，并不是给 Pi 注册两个通用聊天模型。`auto` 按凭据选择服务商，不是请求失败后的自动容灾切换。
 
@@ -191,11 +191,11 @@ Provider 选择优先级：
 | --- | --- |
 | `/jev`、`/jev status` | 查看 Provider、凭据来源、功能状态及成功请求统计。 |
 | `/jev setup [auto\|typesafe\|vercel]` | 交互配置，保存到全局。 |
-| `/jev provider [auto\|typesafe\|vercel]` | 查看或切换当前会话 Provider，不持久化。 |
+| `/jev provider [auto\|typesafe\|vercel]` | 查看或切换 Provider，修改保存到全局。 |
 | `/jev test` | 向 Jev 发送固定示例。 |
 | `/jev test <prompt>` | 先调用 Pi 当前聊天模型设计问题，再调用 Jev；两者都需要凭据，均可能计费。 |
 | `/jev skills [query]` | 无参数列出技能，有参数筛选技能。 |
-| `/jev enable`、`/jev disable` | 只改变三个 Jev 工具的会话激活状态。 |
+| `/jev enable`、`/jev disable` | 只改变三个 Jev 工具的激活状态，并保存到全局。 |
 | `/jev auto [on\|off]` | 每次 prompt 前自动路由工具和推荐技能。 |
 | `/jev auto-model [on\|off]` | 按本地任务规则选择 Pi 聊天模型，不调用 Jev 判断模型。 |
 | `/jev tool-guard [on\|off]` | 用 Jev 判断工具参数是否疑似虚构，并辅助分类工具错误。 |
@@ -205,6 +205,8 @@ Provider 选择优先级：
 | `/jev help` | 查看内置帮助。 |
 
 五个功能开关无参数时是**切换**，不是查询；修改立即生效，并保存为之后所有项目/会话的全局默认值。保存失败会提示，当前会话的修改仍然有效。
+
+`/jev provider` 和 `/jev enable` / `/jev disable` 现在也会立即持久化。工具激活状态保存在 `jev.json` 的 `toolsEnabled` 中，启动或重载时恢复，没有凭据时也生效；不改变其他工具或自动功能开关。未保存 `toolsEnabled` 时保留 Pi 原始工具选择。设置是全局的，不是按项目隔离；重启后现有环境变量覆盖仍优先。
 
 | JSON 字段 | 环境变量 | 启动参数 |
 | --- | --- | --- |
@@ -261,7 +263,7 @@ node ./bin/jev-gate.js --criteria "The supplied text explains installation and c
 
 最后一条会把文件内容发送到选中的 Jev 服务。支持 `--diff`（读取 `git diff HEAD`，不含未跟踪文件）、`--file` 和 stdin。正常评估通过退出 `0`，不通过退出 `1`，runner 捕获的配置/API 等异常退出 `2`；`--fail-open` 会将捕获的异常改为成功退出，不宜用于强制验收。启动器自身异常不应被当作有效判定。
 
-CLI 创建独立的 `JevClient`，读取环境变量和全局配置，不继承另一 Pi 进程中 `/jev provider` 的临时选择。
+CLI 创建独立的 `JevClient`，读取环境变量和全局配置，包括 `/jev provider` 成功保存的选择，但不继承另一 Pi 进程的内存覆盖值。
 
 ## 代码结构
 
@@ -284,8 +286,9 @@ git clone https://github.com/0x1f/pi-jev-multi-provider.git
 cd pi-jev-multi-provider
 npm install
 npm run typecheck
+npm test
 ```
 
-包另有 `npm run smoke`，它会启动 Pi 并发送 prompt，可能使用本机模型凭据、触发网络请求和费用；不是离线单元测试。`typecheck` 当前不覆盖 `bin/jev-gate-runner.ts`。本版未附独立测试套件或依赖锁文件。
+包另有 `npm run smoke`，它会启动 Pi 并发送 prompt，可能使用本机模型凭据、触发网络请求和费用；不是离线单元测试。`typecheck` 当前不覆盖 `bin/jev-gate-runner.ts`。`npm test` 使用临时配置目录和全新子进程运行离线持久化回归测试，不使用真实凭据。本版未附依赖锁文件。
 
 本次文档整理依据源代码静态核对，并非 TypeSafe/Vercel 实网兼容性或安全性认证；没有运行付费推理、`smoke` 或编排任务。部署前请在自己的受控环境中验证所选 Pi 版本和 Provider。

@@ -4,7 +4,7 @@
 
 Jev System One structured judgments, tool routing, and skill recommendations for the [Pi coding agent](https://github.com/earendil-works/pi), with **TypeSafe Direct** and **Vercel AI Gateway** transports.
 
-Maintained by `0x1f`. Current package version: **0.5.1**.
+Maintained by `0x1f`. Current package version: **0.5.2**.
 
 > “Multi-provider” means choosing the service used for Jev evaluations. This extension does not register two general-purpose chat models in Pi. `auto` selects a provider by available credentials; it does not fail over after a request fails.
 
@@ -191,11 +191,11 @@ When unconfigured or offline, manual tool routing does not activate candidates. 
 | --- | --- |
 | `/jev`, `/jev status` | Show provider, credential source, feature status, and successful-request statistics. |
 | `/jev setup [auto\|typesafe\|vercel]` | Interactive setup saved globally. |
-| `/jev provider [auto\|typesafe\|vercel]` | Inspect or switch the current session's provider without persisting it. |
+| `/jev provider [auto\|typesafe\|vercel]` | Inspect or switch the provider; changes are saved globally. |
 | `/jev test` | Send a fixed example to Jev. |
 | `/jev test <prompt>` | Ask Pi's current chat model to design questions, then call Jev. Both need credentials and may incur charges. |
 | `/jev skills [query]` | List skills without a query, or find matching skills with one. |
-| `/jev enable`, `/jev disable` | Change only the three Jev tools' session activation state. |
+| `/jev enable`, `/jev disable` | Change only the three Jev tools' activation state and save globally. |
 | `/jev auto [on\|off]` | Route tools and recommend skills before each prompt. |
 | `/jev auto-model [on\|off]` | Select a Pi chat model with local rules, not a Jev model-selection judgment. |
 | `/jev tool-guard [on\|off]` | Use Jev to detect apparently fabricated tool arguments and classify tool errors. |
@@ -205,6 +205,8 @@ When unconfigured or offline, manual tool routing does not activate candidates. 
 | `/jev help` | Show built-in command help. |
 
 Calling one of the five feature-switch commands without `on` or `off` **toggles it**; it does not query its state. Changes apply immediately and are saved as global defaults for future sessions/projects. If saving fails, a warning is shown and the session change still applies.
+
+`/jev provider` and `/jev enable` / `/jev disable` now persist immediately too. Tool activation is stored as `toolsEnabled` in `jev.json` and restored on startup/reload, even without credentials; unrelated tools and automatic feature switches are unchanged. Without a saved `toolsEnabled`, Pi's initial tool selection is preserved. Preferences are global, not per-project. Existing environment overrides still take precedence after restarting.
 
 | JSON field | Environment variable | Startup flag |
 | --- | --- | --- |
@@ -261,7 +263,7 @@ node ./bin/jev-gate.js --criteria "The supplied text explains installation and c
 
 The last command sends the file content to the selected Jev service. Inputs include `--diff` (`git diff HEAD`, excluding untracked files), `--file`, and stdin. Normal evaluations exit `0` when passing and `1` when failing; configuration/API and other errors caught by the runner exit `2`. `--fail-open` turns caught errors into successful exits and is unsuitable for mandatory acceptance checks. Launcher failures should not be treated as valid judgments.
 
-The CLI creates its own `JevClient`, reading environment variables and global configuration. It does not inherit a temporary `/jev provider` selection from another Pi process.
+The CLI creates its own `JevClient`, reading environment variables and global configuration. It reads a successfully saved `/jev provider` choice, but does not inherit another Pi process's in-memory overrides.
 
 ## Code structure
 
@@ -284,8 +286,9 @@ git clone https://github.com/0x1f/pi-jev-multi-provider.git
 cd pi-jev-multi-provider
 npm install
 npm run typecheck
+npm test
 ```
 
-The package also has `npm run smoke`, which starts Pi and submits a prompt. It may use local model credentials, make network requests, and incur charges; it is not an offline unit test. `typecheck` currently excludes `bin/jev-gate-runner.ts`. This version does not include a standalone test suite or dependency lockfile.
+The package also has `npm run smoke`, which starts Pi and submits a prompt. It may use local model credentials, make network requests, and incur charges; it is not an offline unit test. `typecheck` currently excludes `bin/jev-gate-runner.ts`. `npm test` runs offline persistence regressions in fresh child processes with a temporary config directory and no real credentials. No dependency lockfile is included.
 
 This documentation was checked against source code, not certified through live TypeSafe/Vercel compatibility or security testing. No paid inference, `smoke`, or orchestration tasks were run for this documentation update. Validate your chosen Pi version and provider in a controlled environment before deployment.

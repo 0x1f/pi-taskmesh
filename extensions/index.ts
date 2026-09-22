@@ -10,6 +10,7 @@ import { JevCompactor } from "../src/compact.js";
 import { AgentOrchestrator } from "../src/orchestrator.js";
 import { JevAgentHandler } from "../src/agent.js";
 import { ToolGuard } from "../src/tool-guard.js";
+import { JEV_TOOL_NAMES, isJevTool } from "../src/types.js";
 
 function envBooleanOverride(name: string): boolean | null {
   const raw = process.env[name]?.trim().toLowerCase();
@@ -84,6 +85,13 @@ export default function (pi: ExtensionAPI) {
   registerJevCommands(pi, jevClient, router, skillRouter, auto, autoModel, compactor, agents, toolGuard);
 
   pi.on("session_start", (_event, ctx) => {
+    const toolsEnabled = jevClient.getToolsEnabled();
+    // No saved preference: leave Pi's initial tool selection untouched.
+    if (toolsEnabled !== undefined) {
+      pi.setActiveTools(toolsEnabled
+        ? [...new Set([...pi.getActiveTools(), ...JEV_TOOL_NAMES])]
+        : pi.getActiveTools().filter((name) => !isJevTool(name)));
+    }
     if (!jevClient.isConfigured()) {
       ctx.ui.setStatus("jev", "jev: unconfigured");
       return;

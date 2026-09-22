@@ -39,11 +39,11 @@ function providerLabel(status: JevProviderStatus): string {
 const JEV_SUBCOMMANDS = [
   { value: "status", description: "Show Jev provider and feature status" },
   { value: "setup", description: "Persist provider and API key interactively" },
-  { value: "provider", description: "Switch provider for this Pi session" },
+  { value: "provider", description: "Switch provider and save globally" },
   { value: "skills", description: "Discover relevant skills" },
   { value: "test", description: "Run a Jev connectivity/evaluation test" },
-  { value: "enable", description: "Enable Jev tools in this session" },
-  { value: "disable", description: "Disable Jev tools in this session" },
+  { value: "enable", description: "Enable Jev tools and save globally" },
+  { value: "disable", description: "Disable Jev tools and save globally" },
   { value: "auto", description: "Toggle automatic tool/skill routing" },
   { value: "auto-model", description: "Toggle automatic model routing" },
   { value: "tool-guard", description: "Toggle Jev tool-call guard" },
@@ -257,7 +257,7 @@ export function registerJevCommands(
           ctx.ui.notify(
             `Jev provider: ${status.preference} → ${providerLabel(status)}\n` +
               `Credential: ${status.keyOrigin ?? "not configured"}\n` +
-              `Persist with ~/.pi/agent/jev.json or JEV_PROVIDER=auto|typesafe|vercel.`,
+              `Changes are saved globally in jev.json. JEV_PROVIDER / PI_JEV_PROVIDER can override them after restart.`,
             status.configured ? "info" : "warning"
           );
           return;
@@ -278,11 +278,21 @@ export function registerJevCommands(
         }
 
         client.setProvider(arg as JevProviderPreference);
+        try {
+          client.persistProvider(arg as JevProviderPreference);
+        } catch (err: any) {
+          ctx.ui.notify(
+            `Jev provider set to ${arg} for this session, but global save failed: ${err?.message || err}`,
+            "warning"
+          );
+          return;
+        }
         const status = providerStatus(jevClient);
         ctx.ui.notify(
-          status.configured
-            ? `Jev provider set to ${arg}: ${providerLabel(status)} (${status.keyOrigin}).`
-            : `Jev provider set to ${arg}, but it is not configured: ${status.error ?? "missing credential"}`,
+          (status.configured
+            ? `Jev provider saved globally as ${arg}: ${providerLabel(status)} (${status.keyOrigin}).`
+            : `Jev provider saved globally as ${arg}, but it is not configured: ${status.error ?? "missing credential"}`) +
+            " JEV_PROVIDER / PI_JEV_PROVIDER can override this after restart.",
           status.configured ? "info" : "warning"
         );
         return;
@@ -517,15 +527,20 @@ export function registerJevCommands(
         return;
       }
 
-      if (sub === "enable") {
-        pi.setActiveTools([...new Set([...pi.getActiveTools(), ...JEV_TOOL_NAMES])]);
-        ctx.ui.notify(`Jev tools (${JEV_TOOL_NAMES.join(", ")}) enabled for this session.`, "info");
-        return;
-      }
-
-      if (sub === "disable") {
-        pi.setActiveTools(pi.getActiveTools().filter((t) => !isJevTool(t)));
-        ctx.ui.notify("Jev tools disabled for this session.", "info");
+      if (sub === "enable" || sub === "disable") {
+        const enabled = sub === "enable";
+        pi.setActiveTools(enabled
+          ? [...new Set([...pi.getActiveTools(), ...JEV_TOOL_NAMES])]
+          : pi.getActiveTools().filter((t) => !isJevTool(t)));
+        try {
+          jevClient.persistToolsEnabled(enabled);
+          ctx.ui.notify(`Jev tools ${enabled ? "enabled" : "disabled"} and saved globally. Automatic feature switches are unchanged.`, "info");
+        } catch (err: any) {
+          ctx.ui.notify(
+            `Jev tools ${enabled ? "enabled" : "disabled"} for this session, but global save failed: ${err?.message || err}`,
+            "warning"
+          );
+        }
         return;
       }
 

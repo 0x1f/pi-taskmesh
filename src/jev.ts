@@ -52,6 +52,7 @@ interface JevFeatureConfig {
 
 interface JevGlobalConfig {
   provider?: JevProviderPreference;
+  toolsEnabled?: boolean;
   features?: JevFeatureConfig;
   typesafe?: ProviderConfig;
   vercel?: ProviderConfig;
@@ -388,6 +389,17 @@ export class JevClient {
     config.provider = normalized;
     writeGlobalConfig(config);
     this.setProvider(normalized);
+  }
+
+  public getToolsEnabled(): boolean | undefined {
+    const enabled = readGlobalConfig().toolsEnabled;
+    return typeof enabled === "boolean" ? enabled : undefined;
+  }
+
+  public persistToolsEnabled(enabled: boolean): void {
+    const config = readGlobalConfig();
+    config.toolsEnabled = enabled;
+    writeGlobalConfig(config);
   }
 
   public getFeatureDefault(feature: JevFeatureName): boolean {
