@@ -50,6 +50,7 @@ const JEV_SUBCOMMANDS = [
   { value: "compact", description: "Toggle Jev-assisted compaction" },
   { value: "agents", description: "Dispatch a task through Jev agent orchestration" },
   { value: "auto-agents", description: "Toggle automatic agent orchestration" },
+  { value: "schedule", description: "Explain the last task/model plan or inspect executor status" },
   { value: "help", description: "Show Jev command help" },
 ] as const;
 
@@ -81,6 +82,9 @@ function jevArgumentCompletions(prefix: string) {
   }
 
   const argument = rest.join(" ").toLowerCase();
+  if (subcommand === "schedule") {
+    return ["explain", "status"].filter(value => value.startsWith(argument)).map(value => ({ value: "schedule " + value, label: value, description: "Inspect Jev orchestration" }));
+  }
 
   if (subcommand === "setup" || subcommand === "provider") {
     const matches = PROVIDER_COMPLETIONS.filter((item) =>
@@ -136,7 +140,7 @@ export function registerJevCommands(
       const sub = (tokens[0] ?? "").toLowerCase();
       const rest = tokens.slice(1).join(" ");
       const usage =
-        "Available options: /jev status, /jev setup [auto|typesafe|vercel], /jev provider [auto|typesafe|vercel], /jev skills [query], /jev test [prompt], /jev enable, /jev disable, /jev auto [on|off], /jev auto-model [on|off], /jev compact [on|off], /jev auto-agents [on|off], /jev tool-guard [on|off], /jev agents [task]";
+        "Available options: /jev status, /jev setup [auto|typesafe|vercel], /jev provider [auto|typesafe|vercel], /jev skills [query], /jev test [prompt], /jev enable, /jev disable, /jev auto [on|off], /jev auto-model [on|off], /jev compact [on|off], /jev auto-agents [on|off], /jev tool-guard [on|off], /jev agents [task], /jev schedule [explain|status]";
 
       if (sub === "status" || sub === "") {
         const status = providerStatus(jevClient);
@@ -397,6 +401,12 @@ export function registerJevCommands(
               : ""),
           res.fallbackUsed ? "warning" : "info"
         );
+        return;
+      }
+
+      if (sub === "schedule") {
+        if (rest && rest !== "explain" && rest !== "status") { ctx.ui.notify("Usage: /jev schedule [explain|status]", "warning"); return; }
+        ctx.ui.notify(rest === "status" ? await agents?.status(ctx) ?? "Orchestration unavailable" : agents?.explain() ?? "No schedule", "info");
         return;
       }
 

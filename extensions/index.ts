@@ -73,7 +73,6 @@ export default function (pi: ExtensionAPI) {
   const autoModel = new AutoModelRouter(pi, Boolean(pi.getFlag("jev-auto-model")));
   const compactor = new JevCompactor(jevClient, Boolean(pi.getFlag("jev-compact")));
   const agents = new AgentOrchestrator(pi, jevClient, Boolean(pi.getFlag("jev-agents")));
-  agents.installCompletionNotice();
 
   const toolGuard = new ToolGuard(pi, jevClient, Boolean(pi.getFlag("jev-tool-guard")));
   toolGuard.install();
@@ -85,6 +84,8 @@ export default function (pi: ExtensionAPI) {
   registerJevCommands(pi, jevClient, router, skillRouter, auto, autoModel, compactor, agents, toolGuard);
 
   pi.on("session_start", (_event, ctx) => {
+    agents.restore(ctx);
+    agents.installCompletionNotice();
     const toolsEnabled = jevClient.getToolsEnabled();
     // No saved preference: leave Pi's initial tool selection untouched.
     if (toolsEnabled !== undefined) {
@@ -120,12 +121,19 @@ export default function (pi: ExtensionAPI) {
     if (kind) ctx.ui.setStatus("jev", `jev: ${kind} → fallback next prompt`);
   });
 
-  pi.on("before_agent_start", async (event, ctx) => {
-    if (!auto.enabled) return;
+  pi.on("session_shutdown", () => agents.dispose());
 
-    if (agents.enabled && /\b(architecture|refactor|security review|entire repo|parallel|multiple agents|complex migration)\b/i.test(event.prompt)) {
-      await agents.dispatch(event.prompt, ctx, true);
-    }
+  pi.on("input", async (event, ctx) => {
+    if (!auto.enabled || !agents.enabled || event.source === "extension" || event.images?.length ||
+        event.streamingBehavior || !ctx.isIdle() || event.text.trim().startsWith("/")) return { action: "continue" };
+    if (!await agents.assess(event.text, ctx)) return { action: "continue" };
+    const result = await agents.dispatch(event.text, ctx, true);
+    if (!result.accepted && !result.uncertain) ctx.ui.notify(result.error ?? "Orchestration unavailable", "warning");
+    return { action: result.accepted || result.uncertain || result.busy ? "handled" : "continue" };
+  });
+
+  pi.on("before_agent_start", async (event, ctx) => {
+    if (!auto.enabled || typeof event.prompt !== "string") return;
 
     const modelResult = await autoModel.route(event.prompt, ctx, { hasImages: Boolean(event.images?.length) });
     if (modelResult.changed) {

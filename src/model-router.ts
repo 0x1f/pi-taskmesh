@@ -39,7 +39,7 @@ export function classifyModelError(error: unknown): ModelErrorKind {
   return "unknown";
 }
 
-function modelScore(model: Model<any>, profile: ModelProfile, contextChars: number, hasImages: boolean): number {
+export function modelScore(model: Model<any>, profile: ModelProfile, contextChars: number, hasImages: boolean): number {
   const image = model.input?.includes("image") ? 4 : 0;
   const reasoning = model.reasoning ? 3 : 0;
   const context = Math.min(model.contextWindow / 100_000, 5);

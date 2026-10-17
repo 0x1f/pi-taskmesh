@@ -51,7 +51,7 @@ if (!mode) {
     setActiveTools(names: string[]) { active = names; },
     getAllTools: () => ["read", "unrelated_tool", ...JEV_TOOL_NAMES].map(name => ({ name })),
   } as unknown as ExtensionAPI;
-  const ctx = { ui: { notify(text: string) { notices.push(text); }, setStatus() {} } } as unknown as ExtensionCommandContext;
+  const ctx = { sessionManager: { getBranch: () => [] }, ui: { notify(text: string) { notices.push(text); }, setStatus() {} } } as unknown as ExtensionCommandContext;
   extension(pi);
   for (const handler of handlers.get("session_start") ?? []) await handler({ reason: "startup" }, ctx);
   const run = (args: string) => command(args, ctx);
