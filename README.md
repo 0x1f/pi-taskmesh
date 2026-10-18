@@ -2,7 +2,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-Task-aware, multi-model orchestration for Pi. Version **0.7.0** evolves the existing pi-jev-multi-provider extension: TaskMesh handles task decomposition, routing and execution coordination; Jev is an optional judgment backend and compatibility feature set.
+Task-aware, multi-model orchestration for Pi. Version **0.7.1** evolves the existing pi-jev-multi-provider extension: TaskMesh handles task decomposition, routing and execution coordination; Jev is an optional judgment backend and compatibility feature set.
 
 The default path uses chat models already authenticated in Pi. **No Jev key is required.** This package does not register chat providers or include a subagent executor.
 
@@ -40,6 +40,7 @@ Please inspect this project and implement the requested change with verification
 | Command | Behavior |
 | --- | --- |
 | `/taskmesh on`, `/taskmesh off` | Save the global automatic-delegation preference. |
+| `/taskmesh backend [pi\|jev]` | Show or switch the judgment backend; save globally and apply immediately to subsequent judgments. |
 | `/taskmesh run <task>` | Explicitly authorize and start one workflow while the main agent is idle. |
 | `/taskmesh status` | Show configuration and query the current native run, if any. |
 | `/taskmesh explain` | Show the last decision, task graph, models, selection basis and launch state. |
@@ -56,19 +57,20 @@ Global settings live in `~/.pi/agent/taskmesh.json`, or `$PI_CODING_AGENT_DIR/ta
 }
 ```
 
-`maxConcurrency` is the number of concurrent read tasks, from 1 to 3. Writers run exclusively. Set `decisionBackend` to `jev` only after configuring Jev. Reload after editing the file. Command saves are atomic, preserve unrelated fields, and report errors; invalid settings disable automatic delegation until repaired.
+`maxConcurrency` is the number of concurrent read tasks, from 1 to 3. Writers run exclusively. Use `/taskmesh backend jev` only after configuring Jev, or `/taskmesh backend pi` to return to Pi judgments. Backend commands apply immediately without changing the automatic-delegation switch; direct file edits require a reload. Command saves are atomic, preserve unrelated fields, and report errors; invalid settings disable automatic delegation until repaired.
 
 Use `PI_TASKMESH=1` or `--taskmesh` for a startup opt-in; `PI_TASKMESH=off` overrides a saved default after restarting. Old `jev.json.features.autoAgents`, `PI_JEV_AGENTS` and `--jev-agents` no longer initialize the new core. The interactive `/jev auto-agents on|off` compatibility command still saves the TaskMesh preference. Automatic orchestration is independent of `/jev auto` and `/jev auto-model`. Concurrent config saves use last-writer-wins; atomic replacement prevents partial files, not simultaneous-update loss.
 
 ### Use Jev for orchestration judgments
 
-In Pi, configure Jev with `/jev setup typesafe` or `/jev setup vercel`, then check `/jev status`. Set `"decisionBackend": "jev"` in `~/.pi/agent/taskmesh.json` while preserving the other settings. Reload and, if you want automatic orchestration, enable it:
+In Pi, configure Jev with `/jev setup typesafe` or `/jev setup vercel`, then check `/jev status`. Switch and inspect the backend in the same session:
 
 ```text
-/reload
-/taskmesh on
-/taskmesh status
+/taskmesh backend jev
+/taskmesh backend
 ```
+
+The selection is saved globally and takes effect on subsequent judgments without a reload. Use `/taskmesh backend pi` to return to Pi judgments. Enable automatic orchestration with `/taskmesh on`, or disable it with `/taskmesh off`; switching backend leaves that preference and existing work unchanged.
 
 Jev judges whether an eligible request should be delegated and selects models for individual tasks. Pi chat models still produce the task plan, and native `pi-subagents` executes the children. `/jev agents <task>` uses the same TaskMesh backend as `/taskmesh run <task>`. No separate Jev setup is needed in each child. Selecting this backend does not enable Jev tool routing, tool guards or compaction. Jev judgments and Pi model calls may incur charges.
 

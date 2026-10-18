@@ -55,7 +55,7 @@ export class AgentOrchestrator {
 
   constructor(private pi: ExtensionAPI, private jevClient?: JevClient, enabled = false, private settings = new TaskMeshSettings()) { this.enabled = enabled; }
   public setEnabled(enabled: boolean): void { this.enabled = enabled; }
-  public configure(patch: Partial<TaskMeshConfig>): void { this.settings.save(patch); this.enabled = this.settings.value.enabled; }
+  public configure(patch: Partial<TaskMeshConfig>): void { this.settings.save(patch); if (patch.enabled !== undefined) this.enabled = this.settings.value.enabled; }
   public configuration(): string {
     return "TaskMesh automatic delegation: " + (this.enabled ? "on (user opt-in)" : "off (explicit run only)") +
       " | Decision backend: " + this.settings.value.decisionBackend + " | Readers: " + this.settings.value.maxConcurrency +

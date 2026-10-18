@@ -2,7 +2,7 @@
 
 [English](README.md) | **简体中文**
 
-面向 Pi 的任务感知、多模型编排扩展，版本 **0.7.0**。项目从现有 pi-jev-multi-provider 演进：TaskMesh 负责拆解任务、选模型和协调执行；Jev 成为可选判断后端，原有功能继续兼容。
+面向 Pi 的任务感知、多模型编排扩展，版本 **0.7.1**。项目从现有 pi-jev-multi-provider 演进：TaskMesh 负责拆解任务、选模型和协调执行；Jev 成为可选判断后端，原有功能继续兼容。
 
 默认直接使用 Pi 中已经认证的聊天模型，**不需要 Jev Key**。本项目不注册聊天 provider，也不内置子代理执行器。
 
@@ -40,6 +40,7 @@ pi-bolt install git:github.com/0x1f/pi-taskmesh
 | 命令 | 行为 |
 | --- | --- |
 | `/taskmesh on`、`/taskmesh off` | 保存全局自动委派开关。 |
+| `/taskmesh backend [pi\|jev]` | 查看或切换判断后端，全局保存，对后续判断立即生效。 |
 | `/taskmesh run <任务>` | 主代理空闲时，明确授权并启动一个工作流。 |
 | `/taskmesh status` | 显示配置，存在任务时查询原生运行状态。 |
 | `/taskmesh explain` | 查看最近判断、任务图、模型、选型依据与启动状态。 |
@@ -56,19 +57,20 @@ pi-bolt install git:github.com/0x1f/pi-taskmesh
 }
 ```
 
-`maxConcurrency` 控制并发读任务数，范围 1–3；写任务独占共享工作目录。配置 Jev 后才能将 `decisionBackend` 改为 `jev`。手动编辑后重新加载扩展。命令以原子替换保存、保留无关字段，并报告保存错误；配置损坏时自动模式关闭，修复后才能开启。
+`maxConcurrency` 控制并发读任务数，范围 1–3；写任务独占共享工作目录。配置 Jev 后可用 `/taskmesh backend jev` 切换，或用 `/taskmesh backend pi` 改回 Pi 判断。命令立即生效，不改变自动编排开关；手动编辑配置文件后仍需重新加载扩展。命令以原子替换保存、保留无关字段，并报告保存错误；配置损坏时自动模式关闭，修复后才能开启。
 
 可以使用 `PI_TASKMESH=1` 或 `--taskmesh` 明确开启；`PI_TASKMESH=off` 会在重启后覆盖保存值。旧 `jev.json.features.autoAgents`、`PI_JEV_AGENTS` 和 `--jev-agents` 不再初始化新核心；交互式 `/jev auto-agents on|off` 仍作为兼容命令保存 TaskMesh 开关。自动编排不依赖 `/jev auto` 或 `/jev auto-model`。并发保存采用最后写入者胜出，原子替换防止文件写到一半，不保证多个进程同时更新不丢修改。
 
 ### 在 Pi 中使用 Jev 参与编排判断
 
-在 Pi 中执行 `/jev setup typesafe` 或 `/jev setup vercel`，再用 `/jev status` 检查配置。将 `~/.pi/agent/taskmesh.json` 中的 `"decisionBackend"` 改为 `"jev"`，保留其他设置。重新加载；如果需要自动编排，再开启自动模式：
+在 Pi 中执行 `/jev setup typesafe` 或 `/jev setup vercel`，再用 `/jev status` 检查配置。在同一会话中切换和查看判断后端：
 
 ```text
-/reload
-/taskmesh on
-/taskmesh status
+/taskmesh backend jev
+/taskmesh backend
 ```
+
+选择全局保存，无需重新加载，对后续判断立即生效。`/taskmesh backend pi` 改回 Pi 判断。`/taskmesh on` 开启自动编排，`/taskmesh off` 关闭自动编排；切换后端不改变此开关，也不重启已有任务。
 
 Jev 判断合适的请求是否需要委派，并为各子任务选择模型；Pi 聊天模型仍负责生成任务计划，原生 `pi-subagents` 负责执行子代理。`/jev agents <任务>` 与 `/taskmesh run <任务>` 使用同一个 TaskMesh 判断后端，不必给每个子代理单独接入 Jev。切换判断后端不会开启 Jev 工具路由、参数检查或压缩。Jev 判断和 Pi 模型调用均可能计费。
 

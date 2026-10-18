@@ -97,7 +97,8 @@ if (!mode) {
     assert.equal(config().keep, 42);
   } else if (mode === "taskmesh-on") {
     const settings = new TaskMeshSettings();
-    settings.save({ decisionBackend: "jev", maxConcurrency: 2 });
+    settings.save({ maxConcurrency: 2 });
+    await taskmesh!("backend jev", ctx);
     await taskmesh!("on", ctx);
     assert.equal(new TaskMeshSettings().value.enabled, true);
     assert.match(notices.at(-1)!, /authorizes task decomposition/);
@@ -107,9 +108,11 @@ if (!mode) {
     assert.match(notices.at(-1)!, /Decision backend: jev/);
     assert.match(notices.at(-1)!, /Readers: 2/);
     await taskmesh!("off", ctx);
+    await taskmesh!("backend pi", ctx);
   } else if (mode === "taskmesh-off-restored") {
     await taskmesh!("status", ctx);
     assert.match(notices.at(-1)!, /off \(explicit run only\)/);
+    assert.match(notices.at(-1)!, /Decision backend: pi/);
     assert.equal(new TaskMeshSettings().value.enabled, false);
   } else if (mode === "failure") {
     const blocked = join(process.env.PI_CODING_AGENT_DIR!, "blocked");

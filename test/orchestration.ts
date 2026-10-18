@@ -71,6 +71,7 @@ function fixture(mode: "ok" | "reject" | "unknown" | "no-executor" = "ok") {
   let spawns = 0;
   let onSpawn: (() => void) | undefined;
   const commands = new Map<string, Function>();
+  const completions = new Map<string, Function>();
   const bus = {
     on(name: string, handler: Function) { const set = listeners.get(name) ?? new Set(); set.add(handler); listeners.set(name, set); return () => { set.delete(handler); }; },
     emit(name: string, data: any) {
@@ -101,7 +102,7 @@ function fixture(mode: "ok" | "reject" | "unknown" | "no-executor" = "ok") {
     registerFlag(name: string, options: any) { flags.set(name, options.default); },
     getFlag(name: string) { return flags.get(name); },
     registerTool() {},
-    registerCommand(name: string, options: any) { commands.set(name, options.handler); },
+    registerCommand(name: string, options: any) { commands.set(name, options.handler); completions.set(name, options.getArgumentCompletions); },
     on(name: string, handler: Function) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
     getActiveTools() { return ["read"]; }, setActiveTools() {}, getAllTools() { return [{ name: "read" }]; },
   } as unknown as ExtensionAPI;
@@ -119,7 +120,7 @@ function fixture(mode: "ok" | "reject" | "unknown" | "no-executor" = "ok") {
     },
     ui: { notify(text: string) { notices.push(text); }, setStatus() {} },
   } as unknown as ExtensionContext;
-  return { pi, ctx, bus, entries, requests, notices, handlers, plans, listeners, controller, onSpawn: (callback: () => void) => { onSpawn = callback; }, spawns: () => spawns, command: (...args: any[]) => commands.get("jev")!(...args), taskmesh: (...args: any[]) => commands.get("taskmesh")!(...args) };
+  return { pi, ctx, bus, entries, requests, notices, handlers, plans, listeners, controller, completions, onSpawn: (callback: () => void) => { onSpawn = callback; }, spawns: () => spawns, command: (...args: any[]) => commands.get("jev")!(...args), taskmesh: (...args: any[]) => commands.get("taskmesh")!(...args) };
 }
 
 try {
@@ -404,6 +405,69 @@ try {
   assert.equal(explicit.spawns(), 1, "Explicit run works with automatic mode off and no Jev key");
   for (const handler of explicit.handlers.get("session_shutdown") ?? []) await handler({}, explicit.ctx);
 
+  assert.equal(jevCalls, 0, "Default Pi backend must not invoke Jev even when a key exists");
+
+  // Switch the real command and input hook without reloading; all calls remain local fakes.
+  const backendSettings = new TaskMeshSettings();
+  writeFileSync(backendSettings.path, JSON.stringify({ enabled: false, decisionBackend: "pi", maxConcurrency: 2, keep: 42 }));
+  writeFileSync(join(root, "jev.json"), JSON.stringify({ typesafe: { apiKey: "offline-fixture" } }));
+  process.env.PI_TASKMESH = "on";
+  const backend = fixture(); extension(backend.pi);
+  for (const handler of backend.handlers.get("session_start") ?? []) await handler({}, backend.ctx);
+  const completeBackend = backend.completions.get("taskmesh")!;
+  assert.deepEqual(completeBackend("back").map((item: any) => item.value), ["backend"]);
+  assert.deepEqual(completeBackend("backend ").map((item: any) => item.value), ["backend pi", "backend jev"]);
+  assert.deepEqual(completeBackend("backend j").map((item: any) => item.value), ["backend jev"]);
+  const beforeQuery = readFileSync(backendSettings.path, "utf8");
+  await backend.taskmesh("backend", backend.ctx);
+  assert.match(backend.notices.at(-1)!, /Decision backend: pi/);
+  assert.equal(readFileSync(backendSettings.path, "utf8"), beforeQuery);
+  for (const argument of ["off", "other", "pi extra"]) {
+    await backend.taskmesh("backend " + argument, backend.ctx);
+    assert.match(backend.notices.at(-1)!, /Usage:.*backend/);
+    assert.equal(readFileSync(backendSettings.path, "utf8"), beforeQuery);
+  }
+  await backend.taskmesh("backend jev", backend.ctx);
+  assert.deepEqual(JSON.parse(readFileSync(backendSettings.path, "utf8")), { enabled: false, decisionBackend: "jev", maxConcurrency: 2, keep: 42 });
+  await backend.taskmesh("backend", backend.ctx);
+  assert.match(backend.notices.at(-1)!, /on \(user opt-in\)/, "Backend changes must preserve the environment-enabled session");
+  assert.equal(jevCalls, 0, "Querying or switching backend must not make a paid judgment");
+  assert.equal(backend.plans.length, 0);
+  assert.equal(backend.requests.length, 0);
+  const backendInput = backend.handlers.get("input")![0];
+  team = false;
+  assert.equal((await backendInput({ source: "interactive", text: "A simple question" }, backend.ctx)).action, "continue");
+  assert.equal(jevCalls, 1, "The next judgment must immediately use Jev");
+  assert.equal(backend.plans.length, 0);
+  await backend.taskmesh("backend pi", backend.ctx);
+  assert.equal((await backendInput({ source: "interactive", text: "Another question" }, backend.ctx)).action, "continue");
+  assert.equal(jevCalls, 1, "Switching back to Pi must stop Jev judgments");
+  assert.equal(backend.plans.length, 1);
+  const beforeFailure = readFileSync(backendSettings.path, "utf8");
+  writeFileSync(backendSettings.path, "invalid JSON");
+  await backend.taskmesh("backend jev", backend.ctx);
+  assert.match(backend.notices.at(-1)!, /global save failed/);
+  await backend.taskmesh("backend", backend.ctx);
+  assert.match(backend.notices.at(-1)!, /Decision backend: pi/);
+  assert.equal(readFileSync(backendSettings.path, "utf8"), "invalid JSON");
+  writeFileSync(backendSettings.path, beforeFailure);
+  team = true;
+  assert.equal((await backendInput({ source: "interactive", text: "Refactor and review the parser" }, backend.ctx)).action, "handled");
+  await backend.taskmesh("backend jev", backend.ctx);
+  await backend.taskmesh("explain", backend.ctx);
+  assert.match(backend.notices.at(-1)!, /State: running \| Run: owned-run/);
+  assert.equal(backend.spawns(), 1, "Switching backend must not restart an active run");
+  for (const handler of backend.handlers.get("session_shutdown") ?? []) await handler({}, backend.ctx);
+  new TaskMeshSettings().save({ enabled: true });
+  process.env.PI_TASKMESH = "off";
+  const backendOff = fixture(); extension(backendOff.pi);
+  await backendOff.taskmesh("backend pi", backendOff.ctx);
+  await backendOff.taskmesh("backend", backendOff.ctx);
+  assert.match(backendOff.notices.at(-1)!, /off \(explicit run only\)/, "Backend changes must preserve the environment-disabled session");
+  assert.equal(new TaskMeshSettings().value.enabled, true, "Backend selection must preserve the saved opt-in");
+  for (const handler of backendOff.handlers.get("session_shutdown") ?? []) await handler({}, backendOff.ctx);
+  delete process.env.PI_TASKMESH;
+
   const configured = new TaskMeshSettings();
   writeFileSync(configured.path, JSON.stringify({ enabled: true, keep: 42 }));
   configured.save({ maxConcurrency: 1 });
@@ -414,7 +478,6 @@ try {
   assert.equal(new TaskMeshSettings().value.enabled, false);
   assert.ok(new TaskMeshSettings().error);
   assert.throws(() => configured.save({ enabled: true }));
-  assert.equal(jevCalls, 0, "Default Pi backend must not invoke Jev even when a key exists");
   console.log("PASS: Pi decisions without Jev, scoped per-node models, bounded inference fallback, DAG dependencies, exclusive writers, review, correlated RPC, unknown launch fuse, session isolation and commands (offline).");
 } finally {
   JevClient.prototype.evaluate = originalEvaluate;
