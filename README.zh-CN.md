@@ -8,10 +8,10 @@
 
 ## 快速开始
 
-仓库仍位于原来的 GitHub 地址。发布代码后可从该地址安装：
+从 GitHub 安装：
 
 ```bash
-pi-bolt install git:github.com/0x1f/pi-jev-multi-provider
+pi-bolt install git:github.com/0x1f/pi-taskmesh
 ```
 
 上游 Pi 用户将 `pi-bolt` 换成 `pi`。安装后重启或 `/reload`。本地验证可在源码目录执行 `pi-bolt -e ./extensions/index.ts`，无需全局安装；远程安装时应固定实际已发布的提交。
@@ -59,6 +59,18 @@ pi-bolt install git:github.com/0x1f/pi-jev-multi-provider
 `maxConcurrency` 控制并发读任务数，范围 1–3；写任务独占共享工作目录。配置 Jev 后才能将 `decisionBackend` 改为 `jev`。手动编辑后重新加载扩展。命令以原子替换保存、保留无关字段，并报告保存错误；配置损坏时自动模式关闭，修复后才能开启。
 
 可以使用 `PI_TASKMESH=1` 或 `--taskmesh` 明确开启；`PI_TASKMESH=off` 会在重启后覆盖保存值。旧 `jev.json.features.autoAgents`、`PI_JEV_AGENTS` 和 `--jev-agents` 不再初始化新核心；交互式 `/jev auto-agents on|off` 仍作为兼容命令保存 TaskMesh 开关。自动编排不依赖 `/jev auto` 或 `/jev auto-model`。并发保存采用最后写入者胜出，原子替换防止文件写到一半，不保证多个进程同时更新不丢修改。
+
+### 在 Pi 中使用 Jev 参与编排判断
+
+在 Pi 中执行 `/jev setup typesafe` 或 `/jev setup vercel`，再用 `/jev status` 检查配置。将 `~/.pi/agent/taskmesh.json` 中的 `"decisionBackend"` 改为 `"jev"`，保留其他设置。重新加载；如果需要自动编排，再开启自动模式：
+
+```text
+/reload
+/taskmesh on
+/taskmesh status
+```
+
+Jev 判断合适的请求是否需要委派，并为各子任务选择模型；Pi 聊天模型仍负责生成任务计划，原生 `pi-subagents` 负责执行子代理。`/jev agents <任务>` 与 `/taskmesh run <任务>` 使用同一个 TaskMesh 判断后端，不必给每个子代理单独接入 Jev。切换判断后端不会开启 Jev 工具路由、参数检查或压缩。Jev 判断和 Pi 模型调用均可能计费。
 
 ## 判断、路由与执行边界
 
