@@ -2,7 +2,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-Task-aware, multi-model orchestration for Pi. Version **0.8.0** evolves the existing pi-jev-multi-provider extension: TaskMesh handles task decomposition, routing and execution coordination; Jev is an optional judgment backend and compatibility feature set.
+Task-aware, multi-model orchestration for Pi. Version **0.8.1** evolves the existing pi-jev-multi-provider extension: TaskMesh handles task decomposition, routing and execution coordination; Jev is an optional judgment backend and compatibility feature set.
 
 The default path uses chat models already authenticated in Pi. **No Jev key is required.** This package does not register chat providers or include a subagent executor.
 
@@ -95,6 +95,10 @@ When automatic judgment classifies a message such as `continue` as `resume`, an 
 ### Native Goal checkpoints
 
 With `/taskmesh on`, a version-3 checkpoint from a compatible `pi-goal-x` uses the same saved Pi/Jev decision backend. TaskMesh adds a model-only `taskmesh_goal` tool instead of treating arbitrary extension messages as user authorization. It verifies the live Goal ID, owner session, generation, dispatch ID, active status and automatic-continuation preference through `get_goal`, then asks the normal decision/planning path whether delegation is suitable.
+
+**Existing unfinished Goals work without recreation or migration.** Reload the extension at a safe point; the next native checkpoint reads the same Goal ID, completed task evidence, current task and accumulated usage. TaskMesh passes the current task and existing progress to planning; it does not reset them or rerun completed steps on its own. A paused Goal still needs the user to resume it through Goal\'s normal controls; a completed Goal is not reopened. The wait-policy and budget restrictions below also apply to existing Goals.
+
+`taskmesh_goal` must be a **standalone direct model tool call**, not `tools.taskmesh_goal()` inside `codemode` and not a slash command. Its model-only exposure deliberately excludes it from `ALL_TOOLS` and codemode discovery, preserving native end-turn/wait semantics. The tested Pi-Bolt declares it directly in both codemode `on` and `only` modes. If it is missing from the model\'s declared tools, reload/check the extension rather than inventing a nested or shell fallback. Version 0.8.1 also corrects the native `ctx.executeTool` result envelope; 0.8.0 could incorrectly reject a valid existing Goal as stale.
 
 Before any child launch, `update_goal` must accept a native `wait` disposition and return its wait token. In the tested Goal 0.32.3, new waits require the existing `strictExecutionContract` opt-in, which defaults to `false`. To opt into that Goal policy, merge this existing setting into the project's `.pi/pi-goal-x-settings.json` or the global `~/.pi/agent/pi-goal-x-settings.json`:
 
@@ -307,9 +311,12 @@ npm run typecheck
 npm test
 npm run test:native  # requires the installed compatible pi-subagents package
 npm run test:goal    # requires compatible pi-goal-x and Node with module.registerHooks
+npm run test:host    # requires pi-bolt; actual tool dispatch with synthetic model/Goal/executor
 npm run smoke        # requires pi-bolt; private offline startup only
 ```
 
 The lockfile fixes development dependencies, including Pi SDK 0.85.0; typechecking against that SDK does not establish support for every Pi version. The extension declares Node >=20.3; the host may require a newer Node. The native workflow test accepts a package directory as its first argument or `PI_SUBAGENTS_DIR`; the Goal test accepts `PI_GOAL_DIR` or its first argument. The Goal test uses the installed scheduler/runtime with a synthetic store and fake executor, including default-policy refusal, accepted wait, early/late completion, wrong tokens, native-notification takeover and budget/allowance refusal.
+
+The host tool test runs both codemode modes with synthetic streamed tool calls, exercises native nested-tool result envelopes and outer wait termination, and includes codemode misuse and rejected-tool negative controls. The native Goal tests also retain pre-existing completed tasks, current-task focus, token/time usage and autonomous-run accounting. Neither test opens or edits a real Goal.
 
 Verification uses synthetic data, fake model/executor responses, fresh-process settings checks, the installed native workflow validator/sandbox with local fake children, and an actual Pi-Bolt load in a private offline config. Smoke blocks network requests and makes no model calls. Runtime regressions and actual host startup were also verified with the optional TypeSafe SDK physically absent. `typecheck` still excludes the legacy Gate runner. These checks establish local contracts; they do not prove live provider compatibility, model quality or paid end-to-end child execution.

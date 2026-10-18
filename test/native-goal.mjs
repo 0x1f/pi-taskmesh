@@ -15,6 +15,10 @@ const env = { ...process.env };
 const originalFetch = globalThis.fetch;
 const schedulers = [];
 const runtimes = [];
+const goals = [];
+const progress = { currentTaskId: "replay", usage: { tokensUsed: 3000000, activeSeconds: 2400 },
+  taskList: { tasks: [{ id: "baseline", title: "Baseline", status: "complete", evidence: "Existing baseline report" },
+    { id: "replay", title: "Replay", status: "pending" }], blockCompletion: true, proposedAt: "2026-10-18T01:00:00.000Z" } };
 const hooks = registerHooks({
   resolve(specifier, context, next) {
     // The bundled host supplies these peers; standalone Node uses the checked-out dev peers.
@@ -45,8 +49,8 @@ try {
     } };
     const ctx = { cwd: root, isIdle: () => true, hasPendingMessages: () => false,
       sessionManager: { getSessionId: () => "native-fixture" }, ui: { notify() {} } };
-    const core = { pi, state: { goal: { ...createGoal({ objective: "Implement and verify the remaining parser work" }), autoContinue: true,
-      scheduler: { ...newGoalScheduler("native-fixture"), phase: "ready", decision: { kind: "ready", purpose: "kickoff" } } } },
+    const core = { pi, state: { goal: { ...createGoal({ objective: "Implement and verify the remaining parser work" }), autoContinue: true, ...structuredClone(progress),
+      scheduler: { ...newGoalScheduler("native-fixture"), used: 3, phase: "ready", decision: { kind: "ready", purpose: "kickoff" } } } },
       updateUI() {}, reconcileFocusedGoalFromDisk() {}, clearActiveAccounting() {},
       goalService: { flushForAudit() {}, isTurnBuffered: () => false, apply(_ctx, { expectedGoalId, mutate }) {
         assert.equal(expectedGoalId, core.state.goal.id);
@@ -55,13 +59,15 @@ try {
         return { ok: true, goal: core.state.goal };
       } },
     };
+    goals.push({ core, id: core.state.goal.id, createdAt: core.state.goal.createdAt });
     const scheduler = new GoalScheduler(core); schedulers.push(scheduler);
     const runtime = new GoalRuntime({ getGoal: () => core.state.goal,
       isActionable: id => core.state.goal.id === id && core.state.goal.status === "active" && core.state.goal.autoContinue,
       authorize: () => scheduler.claim(ctx), sendFollowUp(content, details) { delivered.push({ content, details }); },
     }); runtimes.push(runtime); core.runtime = runtime;
-    ctx.executeTool = async (name, input) => name === "get_goal" ? { details: goalDetails(core.state.goal) }
-      : (assert.equal(name, "update_goal"), scheduler.declare(ctx, input.continuation));
+    ctx.executeTool = async (name, input) => ({ isError: false,
+      result: name === "get_goal" ? { details: goalDetails(core.state.goal) }
+        : (assert.equal(name, "update_goal"), scheduler.declare(ctx, input.continuation)) });
     let spawns = 0; let lease;
     const agents = { enabled: true, hasActive: () => false,
       goalSchedule: () => lease ? "Retained native workflow; read its existing results" : undefined,
@@ -111,7 +117,7 @@ try {
     }
     await f.nextCheckpoint();
     assert.equal(f.core.state.goal.scheduler.dispatch.kind, "wake");
-    assert.equal(f.core.state.goal.scheduler.used, 2);
+    assert.equal(f.core.state.goal.scheduler.used, 5);
     assert.equal((await f.run()).terminate, false);
     assert.equal(f.spawns(), 1, "A resumed checkpoint must reuse its retained workflow");
     f.scheduler.shutdown(); f.runtime.clearContinuationState();
@@ -121,7 +127,7 @@ try {
   native.scheduler.message(native.ctx, { role: "custom", customType: "subagent-notify", content: "Saved results" });
   assert.equal(native.core.state.goal.scheduler.phase, "idle");
   assert.equal(native.core.state.goal.scheduler.wait, undefined);
-  assert.equal(native.core.state.goal.scheduler.used, 1, "Accepted native completion must not claim a duplicate Goal wake");
+  assert.equal(native.core.state.goal.scheduler.used, 4, "Accepted native completion must not claim a duplicate Goal wake");
   native.scheduler.shutdown(); native.runtime.clearContinuationState();
 
   const finite = await fixture(true);
@@ -136,7 +142,13 @@ try {
   assert.equal(exhausted.core.state.goal.scheduler.phase, "running");
   assert.equal(exhausted.core.state.goal.scheduler.used, 5);
   exhausted.scheduler.shutdown(); exhausted.runtime.clearContinuationState();
-  console.log("PASS: installed Goal scheduler/runtime, default wait refusal, strict wait + terminate, early/late token wake, wrong token, native notice takeover, retained workflow and budget/allowance refusal; synthetic store, zero models/children.");
+  for (const { core, id, createdAt } of goals) {
+    assert.equal(core.state.goal.id, id); assert.equal(core.state.goal.createdAt, createdAt);
+    assert.equal(core.state.goal.currentTaskId, progress.currentTaskId);
+    assert.deepEqual(core.state.goal.usage, progress.usage);
+    assert.deepEqual(core.state.goal.taskList, progress.taskList);
+  }
+  console.log("PASS: existing Goal progress/usage/focus preserved, installed Goal scheduler/runtime, default wait refusal, strict wait + terminate, early/late token wake, wrong token, native notice takeover, retained workflow and budget/allowance refusal; synthetic store, zero models/children.");
 } finally {
   for (const scheduler of schedulers) scheduler.shutdown();
   for (const runtime of runtimes) runtime.clearContinuationState();

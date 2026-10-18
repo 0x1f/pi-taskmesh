@@ -5,7 +5,7 @@ import type { AgentOrchestrator, GoalWait } from "./orchestrator.js";
 interface Checkpoint { goalId: string; generation: string; dispatchId: string }
 interface Goal {
   id: string; status: string; autoContinue: boolean; objective: string; tokenBudget?: number;
-  verificationContract?: string; taskList?: unknown;
+  verificationContract?: string; currentTaskId?: string; taskList?: unknown;
   scheduler?: { owner: string; generation: string; phase: string; dispatch?: { id: string }; wait?: { token: string } };
 }
 interface GoalResult {
@@ -13,7 +13,7 @@ interface GoalResult {
   details?: { version?: number; goal?: Goal | null; waitToken?: string; error?: boolean };
 }
 type GoalContext = ExtensionContext & {
-  executeTool?: (name: string, args: Record<string, unknown>, options?: { signal?: AbortSignal }) => Promise<GoalResult>;
+  executeTool?: (name: string, args: Record<string, unknown>, options?: { signal?: AbortSignal }) => Promise<{ result?: GoalResult; isError: boolean }>;
 };
 
 /** Use the installed Goal tools: never read or rewrite its private files. */
@@ -23,7 +23,7 @@ export class GoalBridge {
   constructor(pi: ExtensionAPI, private agents: AgentOrchestrator) {
     const tool = {
       name: "taskmesh_goal", label: "TaskMesh Goal",
-      description: "Assess the current native Goal checkpoint for automatic delegation. Requires an active claimed checkpoint and Goal's permission to wait. Otherwise continue with the main agent.",
+      description: "Assess the current native Goal checkpoint for automatic delegation. Call directly and alone, never through codemode or another tool. Requires an active claimed checkpoint and Goal's permission to wait. Otherwise continue with the main agent.",
       exposure: "model-only" as const, executionMode: "sequential" as const,
       reachesTools: () => ["get_goal", "update_goal"],
       parameters: Type.Object({}, { additionalProperties: false }),
@@ -43,7 +43,9 @@ export class GoalBridge {
         ![d.goalId, d.generation, d.dispatchId].every(v => typeof v === "string" && v.length > 0 && v.length <= 256)) return;
     this.checkpoint = { goalId: d.goalId as string, generation: d.generation as string, dispatchId: d.dispatchId as string };
     return { customType: "taskmesh-goal-checkpoint", display: false,
-      content: "This turn is a Goal checkpoint. Call taskmesh_goal once before substantive work to apply the saved TaskMesh automatic preference. " +
+      content: "This turn is a Goal checkpoint. Call taskmesh_goal once as a standalone direct tool call, not through codemode, ALL_TOOLS or a shell, before substantive work. " +
+        "It is model-only and intentionally absent from codemode discovery. Do not call it in parallel with other work. " +
+        "If it is not declared, report that the loaded tool is unavailable and continue under the Goal policy; do not invent a shell or codemode fallback. " +
         "It verifies the live Goal and may decline; then continue with the main agent under the Goal policy. " +
         "Never change Goal settings or its budget to enable delegation. A retained failed workflow must not be replayed automatically." };
   }
@@ -56,13 +58,18 @@ export class GoalBridge {
       return response("TaskMesh Goal delegation unavailable: requires this turn's Goal checkpoint, automatic mode, and native nested tool support. Continue under the Goal policy.");
     }
     this.busy = true;
-    const execute = ctx.executeTool.bind(ctx);
+    const invoke = ctx.executeTool.bind(ctx);
+    const execute = async (name: string, args: Record<string, unknown>): Promise<GoalResult> => {
+      const outcome = await invoke(name, args, { signal });
+      if (outcome.isError || !outcome.result) throw new Error("Native Goal tool failed: " + name);
+      return outcome.result;
+    };
     const current = () => {
       if (this.checkpoint !== checkpoint || !this.agents.enabled || signal?.aborted) throw new Error("Goal checkpoint changed or delegation was cancelled");
     };
     const read = async (): Promise<Goal> => {
       current();
-      const result = await execute("get_goal", {}, { signal });
+      const result = await execute("get_goal", {});
       current();
       const goal = result.details?.goal;
       const s = goal?.scheduler;
@@ -82,7 +89,8 @@ export class GoalBridge {
       if (retained) return response(retained);
       if (this.agents.hasActive()) return response("Another TaskMesh workflow is already active. Inspect its retained results before starting concurrent work. " + this.agents.summary());
       const task = "Execute only the remaining authorized work for Goal " + goal.id + ". Reuse completed evidence; do not replay completed steps.\nObjective:\n" + goal.objective +
-        "\nVerification contract:\n" + (goal.verificationContract ?? "") + "\nTask progress (background):\n" + JSON.stringify(goal.taskList ?? null);
+        "\nVerification contract:\n" + (goal.verificationContract ?? "") + "\nCurrent task: " + (goal.currentTaskId ?? "not set") +
+        "\nTask progress (background):\n" + JSON.stringify(goal.taskList ?? null);
       if (task.length > 32000) return response("Goal requirements exceed TaskMesh's bounded input. Continue with the main agent without truncating the requirements.");
       const decision = await this.agents.assessDetailed(task, ctx);
       current();
@@ -90,7 +98,7 @@ export class GoalBridge {
       const result = await this.agents.dispatch(task, ctx, true, async (): Promise<GoalWait> => {
         await read(); // Planning can take time; recheck immediately before the wait and spawn.
         current();
-        const wait = await execute("update_goal", { continuation: { kind: "wait", reason: "Waiting for the current TaskMesh workflow", deadline: new Date(Date.now() + 3_600_000).toISOString() } }, { signal });
+        const wait = await execute("update_goal", { continuation: { kind: "wait", reason: "Waiting for the current TaskMesh workflow", deadline: new Date(Date.now() + 3_600_000).toISOString() } });
         waiting = wait.terminate === true;
         const token = wait.details?.waitToken;
         if (wait.isError || wait.details?.error || !waiting || typeof token !== "string" || !token ||

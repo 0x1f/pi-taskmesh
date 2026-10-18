@@ -2,7 +2,7 @@
 
 [English](README.md) | **简体中文**
 
-面向 Pi 的任务感知、多模型编排扩展，版本 **0.8.0**。项目从现有 pi-jev-multi-provider 演进：TaskMesh 负责拆解任务、选模型和协调执行；Jev 成为可选判断后端，原有功能继续兼容。
+面向 Pi 的任务感知、多模型编排扩展，版本 **0.8.1**。项目从现有 pi-jev-multi-provider 演进：TaskMesh 负责拆解任务、选模型和协调执行；Jev 成为可选判断后端，原有功能继续兼容。
 
 默认直接使用 Pi 中已经认证的聊天模型，**不需要 Jev Key**。本项目不注册聊天 provider，也不内置子代理执行器。
 
@@ -95,6 +95,10 @@ Jev 判断合适的请求是否需要委派，并为各子任务选择模型；P
 ### 原生 Goal checkpoint
 
 开启 `/taskmesh on` 后，兼容 `pi-goal-x` 的 version-3 checkpoint 使用同一个 Pi/Jev 判断后端。TaskMesh 通过仅供模型直接调用的 `taskmesh_goal` 工具接入，不把任意扩展消息当成用户授权。工具调用 `get_goal`，核对实时 Goal ID、所属会话、generation、dispatch ID、active 状态和自动续跑偏好，再进入已有判断与规划流程。
+
+**以前创建、尚未完成的 Goal 也能使用，不需要重建或迁移。** 在安全时点重新加载扩展，下一次原生 checkpoint 会读取同一个 Goal ID、已完成项的证据、当前任务和累计用量。TaskMesh 将当前任务及既有进度交给规划器，不重置它们，也不会自行重跑已完成步骤。暂停的 Goal 仍由用户通过 Goal 原生命令恢复，已完成的 Goal 不会重新打开。下面的等待策略和预算限制同样适用于旧 Goal。
+
+`taskmesh_goal` 必须由模型**单独直接调用**，不能在 `codemode` 中执行 `tools.taskmesh_goal()`，它也不是斜杠命令。它的 model-only 暴露方式有意不加入 `ALL_TOOLS` 或 codemode 发现列表，以保留原生结束轮次/等待语义；已测试的 Pi-Bolt 在 codemode 的 `on` 和 `only` 模式下都会直接声明它。如果模型实际收到的工具声明中没有它，应重新加载/检查扩展，不要尝试嵌套调用或 shell 替代。0.8.1 还修正了原生 `ctx.executeTool` 返回值封装；0.8.0 可能将有效的既有 Goal 错判为过期。
 
 启动任何子任务前，必须先由 `update_goal` 接受原生 `wait` disposition 并返回等待 token。已验证的 Goal 0.32.3 要求新等待使用已有的 `strictExecutionContract` 选择，该设置默认 `false`。如需启用这项 Goal 策略，将下面字段合并到项目 `.pi/pi-goal-x-settings.json` 或全局 `~/.pi/agent/pi-goal-x-settings.json`：
 
@@ -307,9 +311,12 @@ npm run typecheck
 npm test
 npm run test:native  # 需要已安装的兼容 pi-subagents
 npm run test:goal    # 需要兼容 pi-goal-x，Node 支持 module.registerHooks
+npm run test:host    # 需要 pi-bolt，真实工具分发与合成模型/Goal/执行器
 npm run smoke        # 需要 pi-bolt，仅做私有配置离线加载
 ```
 
 锁文件固定开发依赖，含 Pi SDK 0.85.0；针对该 SDK 类型检查通过，不代表兼容所有 Pi 版本。扩展声明 Node >=20.3，宿主可能需要更高版本。原生工作流测试可通过首个参数或 `PI_SUBAGENTS_DIR` 指定包目录，Goal 测试使用首个参数或 `PI_GOAL_DIR`。Goal 测试加载已安装的调度器与运行时，使用合成存储和假执行器，覆盖默认策略拒绝、接受等待、提前/延后完成、错误 token、原生通知接管、预算及续跑额度拒绝。
+
+宿主工具测试在两种 codemode 模式下发送合成工具调用，验证原生嵌套工具的返回值封装及外层等待终止，包含 codemode 误用和工具拒绝的负对照。原生 Goal 测试还核对已有完成项、当前任务、token/时间用量和自动续跑记账的保留；两类测试均不读取或修改真实 Goal。
 
 验证使用合成数据、假的模型/执行器回执、跨进程配置检查、已安装原生工作流验证器/沙箱加本地假子任务，以及私有离线配置中的真实 Pi-Bolt 加载。smoke 阻止网络调用，不调用模型。还在实际移除可选 TypeSafe SDK 后验证了运行时回归与真实宿主加载。`typecheck` 仍不包含旧 Gate runner。这些检查验证本地合同，不能证明真实 provider 兼容性、模型质量或付费子代理端到端效果。

@@ -318,19 +318,25 @@ try {
     f.bus.on("pi-goal:wake", (e: any) => wakes.push(e));
     const ctx = { ...f.ctx, async executeTool(name: string, input: any) {
       calls.push(name);
-      if (name === "get_goal") return { details: { version: 3, goal: structuredClone(goal) } };
+      if (name === "get_goal") return { isError: false, result: { details: { version: 3, goal: structuredClone(goal) } } };
       assert.equal(name, "update_goal"); assert.equal(input.continuation.kind, "wait");
-      if (!strict) return { details: { error: true }, terminate: false };
+      if (!strict) return { isError: false, result: { details: { error: true }, terminate: false } };
       goal.scheduler.phase = "waiting"; goal.scheduler.generation = "wait-generation";
       goal.scheduler.wait = { token: "wait-token" };
-      return { details: { goal: structuredClone(goal), waitToken: "wait-token" }, terminate: true };
+      return { isError: false, result: { details: { goal: structuredClone(goal), waitToken: "wait-token" }, terminate: true } };
     } };
     const before = f.handlers.get("before_agent_start")![0];
     const notice = await before({ messageType: "custom", message: { role: "custom", customType: "pi-goal-event", details: checkpoint } }, ctx);
-    assert.match(notice.message.content, /taskmesh_goal/);
+    assert.match(notice.message.content, /not through codemode/);
     const run = () => f.tools.get("taskmesh_goal").execute("goal-call", {}, undefined, undefined, ctx);
     return { ...f, goal, checkpoint, ctx, calls, wakes, before, run };
   }
+  const rejectedGoal = await goalFixture();
+  const getRejectedGoal = rejectedGoal.ctx.executeTool;
+  rejectedGoal.ctx.executeTool = async (name, input) => ({ ...await getRejectedGoal(name, input), isError: true });
+  assert.match((await rejectedGoal.run()).content[0].text, /Native Goal tool failed: get_goal/);
+  assert.equal(rejectedGoal.spawns(), 0); assert.equal(rejectedGoal.plans.length, 0);
+  for (const h of rejectedGoal.handlers.get("session_shutdown") ?? []) await h({}, rejectedGoal.ctx);
   const blockedGoal = await goalFixture("ok", false);
   const deniedWait = await blockedGoal.run();
   assert.equal(deniedWait.terminate, false);
