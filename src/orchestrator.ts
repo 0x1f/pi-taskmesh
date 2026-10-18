@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { JevClient } from "./jev.js";
 import { CapabilityRouter } from "./capability-router.js";
+import { classifyModelError } from "./model-router.js";
 import { conversationContext, planTasks, taskBatches, validatePlan, type TaskPlan } from "./task-planner.js";
 import { TaskMeshSettings, type TaskMeshConfig } from "./taskmesh-config.js";
 import { forbidsDelegation, judgeChoices, type TaskDecision } from "./decision-backend.js";
@@ -9,10 +10,11 @@ const RPC_REQUEST = "subagents:rpc:v1:request";
 const RPC_REPLY = "subagents:rpc:v1:reply:";
 const ASYNC_COMPLETE = "subagent:async-complete";
 const ENTRY = "taskmesh-orchestration";
+export interface GoalWait { goalId: string; generation: string; dispatchId: string; waitToken: string; notified?: boolean }
 export interface OrchestrationResult { runId?: string; accepted: boolean; uncertain?: boolean; busy?: boolean; error?: string }
 interface Schedule {
   task: string; cwd: string; state: "running" | "unknown" | "completed" | "failed" | "stopped" | "paused" | "partial" | "rejected";
-  plan: TaskPlan; plannerModel: string; runId?: string; requestId: string; error?: string;
+  plan: TaskPlan; plannerModel: string; runId?: string; requestId: string; error?: string; goal?: GoalWait; artifactsDir?: string;
 }
 
 /** Embed data as JS literals, never evaluate model-provided code or construct shell commands. */
@@ -49,6 +51,8 @@ export class AgentOrchestrator {
   private lifecycle = new AbortController();
   private router = new CapabilityRouter();
   private last?: Schedule;
+  private goalSchedules = new Map<string, Schedule>();
+  private revision = 0;
   private unsubscribe?: () => void;
 
   public lastDecision?: TaskDecision;
@@ -61,9 +65,15 @@ export class AgentOrchestrator {
       " | Decision backend: " + this.settings.value.decisionBackend + " | Readers: " + this.settings.value.maxConcurrency +
       (this.settings.error ? "\nConfig error (automatic mode disabled): " + this.settings.error : "");
   }
-  private active(): boolean { return Boolean(this.last && ["running", "unknown", "paused"].includes(this.last.state)); }
+  private active(schedule = this.last): boolean { return Boolean(schedule && ["running", "unknown", "paused"].includes(schedule.state)); }
   public hasActive(): boolean { return Boolean(this.planning || this.active()); }
-  private save(): void { if (this.last) this.pi.appendEntry(ENTRY, this.last); }
+  private save(): void {
+    this.revision++;
+    if (this.last) {
+      if (this.last.goal) this.goalSchedules.set(this.last.goal.goalId, this.last);
+      this.pi.appendEntry(ENTRY, this.last);
+    }
+  }
 
   public restore(ctx: ExtensionContext): void {
     this.planning?.abort();
@@ -71,13 +81,18 @@ export class AgentOrchestrator {
     this.lifecycle.abort();
     this.lifecycle = new AbortController();
     this.last = undefined;
+    this.goalSchedules.clear();
+    this.revision++;
     this.lastDecision = undefined;
     this.router = new CapabilityRouter();
     for (const e of ctx.sessionManager.getBranch()) {
       if (e.type === "custom" && (e.customType === ENTRY || e.customType === "jev-orchestration")) {
         const saved = e.data as Schedule;
         if (!saved || saved.cwd !== ctx.cwd || typeof saved.requestId !== "string" || typeof saved.task !== "string") continue;
-        try { validatePlan(saved.plan); this.last = saved; } catch { /* Ignore incompatible old entries. */ }
+        try {
+          validatePlan(saved.plan); this.last = saved;
+          if (saved.goal) this.goalSchedules.set(saved.goal.goalId, saved);
+        } catch { /* Ignore incompatible old entries. */ }
       }
     }
   }
@@ -150,7 +165,7 @@ export class AgentOrchestrator {
     });
   }
 
-  public async dispatch(task: string, ctx: ExtensionContext, automatic = false): Promise<OrchestrationResult> {
+  public async dispatch(task: string, ctx: ExtensionContext, automatic = false, beforeSpawn?: () => Promise<GoalWait>): Promise<OrchestrationResult> {
     if (!this.enabled && automatic) return { accepted: false, error: "disabled" };
     if (this.planning || this.active()) return { accepted: false, busy: true, error: "An orchestration is already active. Use /taskmesh status." };
     if (!task.trim() || task.length > 32000) return { accepted: false, error: "Task must contain 1–32000 characters" };
@@ -160,6 +175,7 @@ export class AgentOrchestrator {
     const signal = AbortSignal.any([this.lifecycle.signal, controller.signal, AbortSignal.timeout(180_000), ...(ctx.signal ? [ctx.signal] : [])]);
     let spawnAttempted = false;
     let started: Schedule | undefined;
+    let goal: GoalWait | undefined;
     try {
       const ping = await this.request("ping", {}, signal);
       if (!ping.success || !ping.data?.capabilities?.asyncSpawn) throw new Error(ping.error?.message ?? "Compatible pi-subagents is unavailable");
@@ -180,8 +196,12 @@ export class AgentOrchestrator {
       await this.router.assign(plan, task + "\n" + context, ctx, this.settings.value.decisionBackend, this.jevClient, signal, load);
       if (signal.aborted) throw signal.reason;
       const script = buildWorkflowScript(task, plan, context, this.settings.value.maxConcurrency);
+      if (automatic && !this.enabled) throw new Error("Automatic delegation was disabled during planning");
+      goal = await beforeSpawn?.();
+      if (signal.aborted) throw signal.reason;
+      if (automatic && !this.enabled) throw new Error("Automatic delegation was disabled before launch");
       const requestId = crypto.randomUUID();
-      this.last = started = { task, cwd: ctx.cwd, plan, plannerModel: this.router.id(planner), state: "unknown", requestId, runId: "rpc-spawn-" + requestId };
+      this.last = started = { task, cwd: ctx.cwd, plan, plannerModel: this.router.id(planner), state: "unknown", requestId, runId: "rpc-spawn-" + requestId, ...(goal ? { goal } : {}) };
       this.save();
       spawnAttempted = true;
       const response = await this.request("spawn", { async: true, script, cwd: ctx.cwd }, signal, requestId);
@@ -190,16 +210,19 @@ export class AgentOrchestrator {
         this.last.state = "failed";
         this.last.error = response.error?.message ?? "Spawn rejected";
         this.save();
+        this.wakeGoal();
         return { accepted: false, error: this.last.error };
       }
       const runId = response.data?.runId ?? response.data?.id ?? response.data?.details?.runId;
       if (typeof runId === "string" && runId) { this.last.runId = runId; if (this.last.state === "unknown") this.last.state = "running"; }
-      this.last.error = this.last.state === "unknown" ? "Launch outcome unknown; inspect /taskmesh status. Do not repeat the task." : undefined;
+      if (this.last.state === "unknown") this.last.error = "Launch outcome unknown; inspect /taskmesh status. Do not repeat the task.";
+      else if (this.last.state === "running" || this.last.state === "completed") this.last.error = undefined;
       this.save();
       ctx.ui.notify(this.last.state === "unknown" ? this.last.error! : "TaskMesh started " + plan.tasks.length + " subtasks [" + this.last.runId + "]", this.last.state === "unknown" ? "warning" : "info");
       return { accepted: response.success === true, uncertain: this.last.state === "unknown", runId: this.last.runId, error: this.last.error };
     } catch (e) {
       if (spawnAttempted) return { accepted: false, uncertain: true, runId: started?.runId, error: String(e) };
+      if (goal) this.pi.events.emit("pi-goal:wake", { goalId: goal.goalId, waitToken: goal.waitToken });
       return { accepted: false, error: String((e as Error)?.message ?? e) };
     } finally { if (this.planning === controller) this.planning = undefined; }
   }
@@ -216,21 +239,58 @@ export class AgentOrchestrator {
   public async status(ctx: ExtensionContext): Promise<string> {
     if (!this.last?.runId) return this.explain();
     const current = this.last;
+    const revision = this.revision;
     const reply = await this.request("status", { id: current.runId, cwd: current.cwd }, ctx.signal);
     if (this.last !== current) return "Session changed while checking status.";
+    if (this.revision !== revision) return this.explain() + "\nExecutor: Ignored an older status reply after a newer execution event.";
     if (reply.success) {
       const runId = reply.data?.details?.runId;
-      if (typeof runId === "string") this.last.runId = runId;
+      if (typeof runId === "string" && runId && runId !== current.runId && current.runId !== "rpc-spawn-" + current.requestId) {
+        return this.explain() + "\nExecutor: Ignored status for a different run.";
+      }
+      if (typeof runId === "string" && runId) this.last.runId = runId;
       const run = reply.data?.asyncSnapshot?.runs?.find((r: any) => r.id === this.last?.runId);
       const state = run?.state === "complete" ? "completed" : run?.state;
-      if (["running", "completed", "failed", "stopped", "paused", "partial", "rejected"].includes(state)) { this.last.state = state; this.last.error = undefined; this.save(); }
+      if (["running", "completed", "failed", "stopped", "paused", "partial", "rejected"].includes(state) && (this.active() || state === this.last.state)) {
+        this.last.state = state;
+        if (state === "completed") this.last.error = undefined;
+        this.save();
+        this.wakeGoal();
+      }
     }
     return this.explain() + "\nExecutor: " + (reply.success ? reply.data?.text ?? JSON.stringify(reply.data) : reply.error?.message ?? "unavailable");
   }
 
-  public async resume(ctx: ExtensionContext): Promise<string> {
+  public goalSchedule(goalId: string): string | undefined {
+    const retained = this.goalSchedules.get(goalId);
+    return retained ? this.summary(retained) : undefined;
+  }
+
+  private wakeGoal(nativeWake = false): void {
+    const s = this.last;
+    if (!s?.goal || s.goal.notified || ["running", "unknown"].includes(s.state)) return;
+    // Native completion events follow accepted result delivery; reuse that wake when present.
+    if (!nativeWake) this.pi.events.emit("pi-goal:wake", { goalId: s.goal.goalId, waitToken: s.goal.waitToken });
+    s.goal.notified = true;
+    this.save();
+  }
+
+  public summary(s = this.last): string {
+    if (!s) return "No TaskMesh schedule in this session branch.";
+    const failed = s.plan.tasks.find(t => s.error?.includes("Run '" + t.id + "' failed") || s.error?.includes("Task " + t.id + " on " + t.model + " failed"));
+    return "TaskMesh " + s.state + " | Run: " + s.runId +
+      (failed ? "\nFailed task: " + failed.id + " | Model: " + failed.model : "") +
+      (s.artifactsDir ? "\nResults: " + s.artifactsDir + "/status.json\nReceipt: " + s.artifactsDir + "/workflow-receipt.json" : "") +
+      (s.error ? "\nError kind: " + classifyModelError(s.error) + " | " + s.error.slice(0, 600) : "") +
+      (this.active(s) ? "\nDo not duplicate this retained workflow or start overlapping writes. Inspect its native status before continuing. " : "\nRead the retained executor results/outputs for this run before continuing the authorized parent task. ") +
+      "A completed workflow is not proof that the parent goal is satisfied. Do not replay the graph automatically. " +
+      "Use /taskmesh status for full results and native retained-child recovery controls.";
+  }
+
+  public async resume(ctx: ExtensionContext, concise = false): Promise<string> {
     if (!this.last) return this.explain();
     const status = await this.status(ctx);
+    if (concise) return this.summary();
     return status + "\nReconnected to the existing schedule. No task was restarted." +
       (this.last && ["paused", "failed", "stopped", "partial", "rejected"].includes(this.last.state)
         ? " Use pi-subagents' explicit controls for a retained child; TaskMesh never replays a failed workflow." : "");
@@ -245,14 +305,18 @@ export class AgentOrchestrator {
       if (!["completed", "failed", "stopped", "paused", "partial", "rejected"].includes(state)) return;
       if (typeof event.runId === "string") this.last.runId = event.runId;
       this.last.state = state;
-      this.last.error = event.error;
+      this.last.error = typeof event.error === "string" ? event.error : undefined;
+      if (typeof event.asyncDir === "string" && event.asyncDir.startsWith("/") && event.asyncDir.length <= 4096) this.last.artifactsDir = event.asyncDir;
+      const failed = this.last.plan.tasks.find(t => this.last!.error?.includes("Run '" + t.id + "' failed") || this.last!.error?.includes("Task " + t.id + " on " + t.model + " failed"));
       for (const result of event.results ?? []) {
         if (typeof result.model === "string" && typeof result.success === "boolean" && this.last.plan.tasks.some(t => t.model === result.model)) {
           this.router.record(result.model, result.success, result.error ?? "");
         }
       }
+      if (failed?.model) this.router.record(failed.model, false, this.last.error);
       this.save();
-      // pi-subagents owns final output delivery and the completion wake.
+      this.wakeGoal(event.triggerTurn === true);
+      // pi-subagents owns final output delivery; Goal wake uses its existing scheduler token.
     });
   }
 

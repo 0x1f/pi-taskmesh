@@ -2,7 +2,7 @@
 
 [English](README.md) | **简体中文**
 
-面向 Pi 的任务感知、多模型编排扩展，版本 **0.7.1**。项目从现有 pi-jev-multi-provider 演进：TaskMesh 负责拆解任务、选模型和协调执行；Jev 成为可选判断后端，原有功能继续兼容。
+面向 Pi 的任务感知、多模型编排扩展，版本 **0.8.0**。项目从现有 pi-jev-multi-provider 演进：TaskMesh 负责拆解任务、选模型和协调执行；Jev 成为可选判断后端，原有功能继续兼容。
 
 默认直接使用 Pi 中已经认证的聊天模型，**不需要 Jev Key**。本项目不注册聊天 provider，也不内置子代理执行器。
 
@@ -76,17 +76,39 @@ Jev 判断合适的请求是否需要委派，并为各子任务选择模型；P
 
 ## 判断、路由与执行边界
 
-1. 对符合条件的纯文本输入判断 `solo`、`team`、`resume` 或 `uncertain`。简单或不确定的输入通常交回主代理；已有任务运行时，不确定的继续请求只显示状态。常见中英文禁止委派表述直接绕过分类器。图片、扩展消息和流式追加输入沿用正常通路。
+1. 对符合条件的纯文本输入判断 `solo`、`team`、`resume` 或 `uncertain`。简单或不确定的输入通常交回主代理；已有任务运行时，不确定的继续请求只显示状态。常见中英文禁止委派表述直接绕过分类器。图片、普通扩展消息和流式追加输入沿用正常通路；原生 Goal checkpoint 使用下述受校验的工具入口。
 2. Pi 根据本次请求、最多 10,000 字符的近期公开对话和最多 6,000 字符的近期 Goal 生成 **1–6 个任务**。不包含 thinking 和工具结果。验证依赖存在、图无环，以及每个写任务之后有依赖于它的审查任务。
 3. 每个任务从会话 scope 内、已认证且满足估算上下文要求的模型中选定明确的 `provider/model`。默认 Pi JSON 判断，可选 Jev choice 判断；每任务最多比较 16 个候选，依据需求、reasoning/上下文元数据、负载和已有执行回执。判断失败时使用元数据与负载评分回退。这些是选型估计，**不是编码能力基准测试**。条件适合时鼓励审查模型不同，但不强制模型多样性。
 4. 使用原生 `pi-subagents` 执行脚本。读任务可并行，worker 独占共享 cwd，后续节点收到依赖结果。只读提示词不等于操作系统权限或沙箱。子代理使用有界上下文，不复制完整历史。
-5. 已报告的认证、额度、限流等失败只冷却对应 `provider/model`，不屏蔽同一网关下的其他模型。成功/失败回执不等于质量评分，重新加载后计数与冷却重置。
+5. 已报告的认证、额度、限流等失败只冷却对应 `provider/model`。`Antigravity: the reply ended before it was complete` 等不完整流错误归为 `incomplete-stream`，对应模型冷却 60 秒，不屏蔽同一网关下的其他模型。成功/失败回执不等于质量评分，重新加载后计数与冷却重置。
 
 每次纯 Pi 推理最多尝试两个模型，每次限时 30 秒。规划、选型发生在子任务启动前。**子任务失败或启动结果未知时，不自动重放执行。** 没收到启动回执时保留请求 ID 并阻止重复派发，直到原生状态或完成事件给出确定结果。新会话记录使用 `taskmesh-orchestration`，仍可恢复旧 `jev-orchestration` 记录。
 
 原生执行器负责执行、完成通知和结果交付。`resume` 用于连接和查看，不重启失败/暂停的工作流，也不重放未确认的副作用；保留子任务的继续操作使用原生执行器的显式控制。没有兼容执行器时，能力检查约 10 秒失败，不启动子代理。
 
 自动模式即使最终决定保持 solo，也可能产生一次 Pi 判断费用。委派通常增加判断、规划和选型调用，再加子代理调用；有限重试和另外启用的 Jev 功能也可能增加费用。项目没有费用硬上限，也不进行实时能力跑分。
+
+### 完成或失败后继续父任务
+
+自动判断将 `continue` 等消息归为 `resume` 时，运行中、暂停或启动结果未知的工作流显示简短状态；已经结束的工作流则把原始消息交回主代理，并附带隐藏的结果交接，说明原运行 ID、可确定的失败节点/模型和结果路径。主代理读取已有证据后继续获授权的父任务。工作流 completed 不代表整个父目标已经完成。显式 `/taskmesh resume` 仍只查询状态，不重试子任务。
+
+### 原生 Goal checkpoint
+
+开启 `/taskmesh on` 后，兼容 `pi-goal-x` 的 version-3 checkpoint 使用同一个 Pi/Jev 判断后端。TaskMesh 通过仅供模型直接调用的 `taskmesh_goal` 工具接入，不把任意扩展消息当成用户授权。工具调用 `get_goal`，核对实时 Goal ID、所属会话、generation、dispatch ID、active 状态和自动续跑偏好，再进入已有判断与规划流程。
+
+启动任何子任务前，必须先由 `update_goal` 接受原生 `wait` disposition 并返回等待 token。已验证的 Goal 0.32.3 要求新等待使用已有的 `strictExecutionContract` 选择，该设置默认 `false`。如需启用这项 Goal 策略，将下面字段合并到项目 `.pi/pi-goal-x-settings.json` 或全局 `~/.pi/agent/pi-goal-x-settings.json`：
+
+```json
+{
+  "strictExecutionContract": true
+}
+```
+
+它也会改变其他 Goal 轮次的续跑合同，TaskMesh 不会自动修改。等待被拒绝时不启动子任务，仍由主代理执行；拒绝前已经发生的判断、规划可能计费。
+
+等待 token 在启动前持久化，取得等待许可后才结束父轮次。原生完成消息唤起父代理；原生没有接受唤起轮次时，TaskMesh 使用 Goal 校验 token 的 wake 事件。等待期限为一小时，由 Goal 原有策略处理。明确的启动前拒绝会解除等待；启动结果未知时保留记录，绝不自动重放。后续 checkpoint 复用该 Goal 的已有工作流，包括切换 Goal 或重新加载当前会话分支后。
+
+设置了 `tokenBudget` 的 Goal 继续由主代理执行，因为此适配器无法把子任务费用计入并限制在 Goal 的生命周期预算内。原生自动续跑额度和暂停状态仍然有效。缺少原生嵌套工具能力或实时 checkpoint 不匹配时，工具拒绝委派。
 
 ## Jev 兼容命令
 
@@ -276,6 +298,7 @@ CLI 创建独立的 `JevClient`，读取环境变量和全局配置，包括 `/j
 | [src/decision-backend.ts](src/decision-backend.ts) | Pi/可选 Jev 判断、JSON 验证与有限纯推理重试。 |
 | [src/task-planner.ts](src/task-planner.ts)、[src/capability-router.ts](src/capability-router.ts) | 上下文、任务图验证与模型分配。 |
 | [src/orchestrator.ts](src/orchestrator.ts) | 原生脚本、RPC 关联、状态恢复与防重派。 |
+| [src/goal-bridge.ts](src/goal-bridge.ts) | 实时 Goal checkpoint 校验、原生等待与受控委派。 |
 | [src/jev.ts](src/jev.ts) | 旧凭据解析与可选 Jev 传输。 |
 
 ```bash
@@ -283,9 +306,10 @@ npm ci --ignore-scripts
 npm run typecheck
 npm test
 npm run test:native  # 需要已安装的兼容 pi-subagents
+npm run test:goal    # 需要兼容 pi-goal-x，Node 支持 module.registerHooks
 npm run smoke        # 需要 pi-bolt，仅做私有配置离线加载
 ```
 
-锁文件固定开发依赖，含 Pi SDK 0.85.0；针对该 SDK 类型检查通过，不代表兼容所有 Pi 版本。扩展声明 Node >=20.3，宿主可能需要更高版本。原生测试可通过首个参数或 `PI_SUBAGENTS_DIR` 指定包目录。
+锁文件固定开发依赖，含 Pi SDK 0.85.0；针对该 SDK 类型检查通过，不代表兼容所有 Pi 版本。扩展声明 Node >=20.3，宿主可能需要更高版本。原生工作流测试可通过首个参数或 `PI_SUBAGENTS_DIR` 指定包目录，Goal 测试使用首个参数或 `PI_GOAL_DIR`。Goal 测试加载已安装的调度器与运行时，使用合成存储和假执行器，覆盖默认策略拒绝、接受等待、提前/延后完成、错误 token、原生通知接管、预算及续跑额度拒绝。
 
 验证使用合成数据、假的模型/执行器回执、跨进程配置检查、已安装原生工作流验证器/沙箱加本地假子任务，以及私有离线配置中的真实 Pi-Bolt 加载。smoke 阻止网络调用，不调用模型。还在实际移除可选 TypeSafe SDK 后验证了运行时回归与真实宿主加载。`typecheck` 仍不包含旧 Gate runner。这些检查验证本地合同，不能证明真实 provider 兼容性、模型质量或付费子代理端到端效果。

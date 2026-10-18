@@ -13,6 +13,7 @@ import { ToolGuard } from "../src/tool-guard.js";
 import { JEV_TOOL_NAMES, isJevTool } from "../src/types.js";
 import { TaskMeshSettings } from "../src/taskmesh-config.js";
 import { registerTaskMeshCommands } from "../src/taskmesh-commands.js";
+import { GoalBridge } from "../src/goal-bridge.js";
 
 function envBooleanOverride(name: string): boolean | null {
   const raw = process.env[name]?.trim().toLowerCase();
@@ -77,6 +78,8 @@ export default function (pi: ExtensionAPI) {
   const compactor = new JevCompactor(jevClient, Boolean(pi.getFlag("jev-compact")));
   const agents = new AgentOrchestrator(pi, jevClient, !settings.error && Boolean(pi.getFlag("taskmesh")), settings);
 
+  const goals = new GoalBridge(pi, agents);
+  let parentHandoff: { prompt: string; content: string } | undefined;
   const toolGuard = new ToolGuard(pi, jevClient, Boolean(pi.getFlag("jev-tool-guard")));
   toolGuard.install();
 
@@ -88,6 +91,8 @@ export default function (pi: ExtensionAPI) {
   registerJevCommands(pi, jevClient, router, skillRouter, auto, autoModel, compactor, agents, toolGuard);
 
   pi.on("session_start", (_event, ctx) => {
+    parentHandoff = undefined;
+    goals.reset();
     agents.restore(ctx);
     agents.installCompletionNotice();
     const toolsEnabled = jevClient.getToolsEnabled();
@@ -124,16 +129,19 @@ export default function (pi: ExtensionAPI) {
     if (kind) ctx.ui.setStatus("jev", `jev: ${kind} → fallback next prompt`);
   });
 
-  pi.on("session_tree", (_event, ctx) => agents.restore(ctx));
-  pi.on("session_shutdown", () => agents.dispose());
+  pi.on("session_tree", (_event, ctx) => { parentHandoff = undefined; goals.reset(); agents.restore(ctx); });
+  pi.on("session_shutdown", () => { goals.reset(); agents.dispose(); });
 
   pi.on("input", async (event, ctx) => {
+    parentHandoff = undefined;
     if (!agents.enabled || event.source === "extension" || event.images?.length ||
         event.streamingBehavior || !ctx.isIdle() || event.text.trim().startsWith("/")) return { action: "continue" };
     const decision = await agents.assessDetailed(event.text, ctx);
     if (decision.kind === "resume" || (decision.kind === "uncertain" && agents.hasActive())) {
-      ctx.ui.notify(await agents.resume(ctx), "info");
-      return { action: "handled" };
+      const summary = await agents.resume(ctx, true);
+      if (agents.hasActive()) { ctx.ui.notify(summary, "info"); return { action: "handled" }; }
+      parentHandoff = { prompt: event.text, content: summary };
+      return { action: "continue" };
     }
     if (decision.kind !== "team") return { action: "continue" };
     const result = await agents.dispatch(event.text, ctx, true);
@@ -142,7 +150,14 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
+    const handoff = parentHandoff;
+    parentHandoff = undefined;
+    const checkpoint = goals.beforeStart(event);
+    if (checkpoint) return { message: checkpoint };
     if (typeof event.prompt !== "string") return;
+    if (handoff?.prompt === event.prompt) {
+      return { message: { customType: "taskmesh-parent-handoff", content: handoff.content, display: false } };
+    }
 
     const modelResult = await autoModel.route(event.prompt, ctx, { hasImages: Boolean(event.images?.length) });
     if (modelResult.changed) {

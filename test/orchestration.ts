@@ -11,6 +11,7 @@ import { AgentOrchestrator, buildWorkflowScript } from "../src/orchestrator.js";
 import { conversationContext, planTasks, taskBatches, validatePlan } from "../src/task-planner.js";
 import { inferJson, type DecisionKind } from "../src/decision-backend.js";
 import { TaskMeshSettings } from "../src/taskmesh-config.js";
+import { classifyModelError } from "../src/model-router.js";
 
 // Model responses, Jev and executor transport are local fakes; no real credentials or children.
 const originalFetch = globalThis.fetch;
@@ -71,6 +72,7 @@ function fixture(mode: "ok" | "reject" | "unknown" | "no-executor" = "ok") {
   let spawns = 0;
   let onSpawn: (() => void) | undefined;
   const commands = new Map<string, Function>();
+  const tools = new Map<string, any>();
   const completions = new Map<string, Function>();
   const bus = {
     on(name: string, handler: Function) { const set = listeners.get(name) ?? new Set(); set.add(handler); listeners.set(name, set); return () => { set.delete(handler); }; },
@@ -101,14 +103,14 @@ function fixture(mode: "ok" | "reject" | "unknown" | "no-executor" = "ok") {
     appendEntry(customType: string, data: unknown) { entries.push({ type: "custom", customType, data: structuredClone(data) }); },
     registerFlag(name: string, options: any) { flags.set(name, options.default); },
     getFlag(name: string) { return flags.get(name); },
-    registerTool() {},
+    registerTool(tool: any) { tools.set(tool.name, tool); },
     registerCommand(name: string, options: any) { commands.set(name, options.handler); completions.set(name, options.getArgumentCompletions); },
     on(name: string, handler: Function) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
     getActiveTools() { return ["read"]; }, setActiveTools() {}, getAllTools() { return [{ name: "read" }]; },
   } as unknown as ExtensionAPI;
   const ctx = {
     cwd: root, signal: controller.signal, scopedModels: [], isIdle: () => true,
-    sessionManager: { getBranch: () => entries },
+    sessionManager: { getBranch: () => entries, getSessionId: () => "fixture-session" },
     modelRegistry: {
       getAvailable: () => models,
       async complete(model: any, context: any) {
@@ -120,10 +122,23 @@ function fixture(mode: "ok" | "reject" | "unknown" | "no-executor" = "ok") {
     },
     ui: { notify(text: string) { notices.push(text); }, setStatus() {} },
   } as unknown as ExtensionContext;
-  return { pi, ctx, bus, entries, requests, notices, handlers, plans, listeners, controller, completions, onSpawn: (callback: () => void) => { onSpawn = callback; }, spawns: () => spawns, command: (...args: any[]) => commands.get("jev")!(...args), taskmesh: (...args: any[]) => commands.get("taskmesh")!(...args) };
+  return { pi, ctx, bus, entries, requests, notices, handlers, plans, listeners, controller, completions, tools, onSpawn: (callback: () => void) => { onSpawn = callback; }, spawns: () => spawns, command: (...args: any[]) => commands.get("jev")!(...args), taskmesh: (...args: any[]) => commands.get("taskmesh")!(...args) };
 }
 
 try {
+  const brokenStream = "Antigravity: the reply ended before it was complete";
+  assert.equal(classifyModelError(brokenStream), "incomplete-stream");
+  const streamRouter = new CapabilityRouter();
+  const clock = Date.now;
+  let now = clock();
+  Date.now = () => now;
+  try {
+    streamRouter.record("beta/deep", false, brokenStream);
+    assert.ok(!streamRouter.available(fixture().ctx).some(m => m.provider === "beta"));
+    assert.ok(streamRouter.available(fixture().ctx).some(m => m.provider === "gamma"));
+    now += 60_001;
+    assert.ok(streamRouter.available(fixture().ctx).some(m => m.provider === "beta"));
+  } finally { Date.now = clock; }
   const plan = validatePlan(rawPlan);
   assert.deepEqual(taskBatches(plan).map(b => b.map(t => t.id)), [["inspect", "research"], ["implement"], ["review"]]);
   assert.equal(validatePlan({ reason: "single read", tasks: [{ ...rawPlan.tasks[0], writes: true }] }).tasks[0].writes, false);
@@ -212,6 +227,174 @@ try {
   orchestrator.dispose(); restored.dispose();
   assert.equal(f.listeners.get("subagent:async-complete")?.size, 0);
   assert.ok([...f.listeners].filter(([k]) => k.startsWith("subagents:rpc:v1:reply:")).every(([, set]) => set.size === 0));
+
+  // A completion arriving before an older status reply must remain authoritative.
+  const race = fixture();
+  const racing = new AgentOrchestrator(race.pi, new JevClient(), true);
+  racing.restore(race.ctx); racing.installCompletionNotice();
+  await racing.dispatch("Fix and verify", race.ctx, true);
+  const emitRace = race.bus.emit.bind(race.bus);
+  let statusRequest: any;
+  race.bus.emit = (name, data) => {
+    if (name === "subagents:rpc:v1:request" && data.method === "status" && data.params.id) statusRequest = data;
+    else emitRace(name, data);
+  };
+  const oldStatus = racing.status(race.ctx);
+  race.bus.emit("subagent:async-complete", { runId: "owned-run", state: "complete" });
+  emitRace("subagents:rpc:v1:reply:" + statusRequest.requestId, { version: 1, requestId: statusRequest.requestId, success: true, data: { asyncSnapshot: { runs: [{ id: "owned-run", state: "running" }] }, text: "stale running" } });
+  assert.match(await oldStatus, /State: completed/);
+  assert.equal(racing.hasActive(), false);
+  for (const id of ["owned-run", "different-run"]) {
+    const status = racing.status(race.ctx);
+    emitRace("subagents:rpc:v1:reply:" + statusRequest.requestId, { version: 1, requestId: statusRequest.requestId, success: true,
+      data: { details: { runId: id }, asyncSnapshot: { runs: [{ id, state: "failed" }] }, text: "older terminal state" } });
+    assert.match(await status, /State: completed/);
+    assert.match(racing.explain(), /Run: owned-run/);
+  }
+  racing.dispose();
+
+  // Goal history survives switching goals and reload; an older failure must not be replayed.
+  const history = fixture();
+  const historical = new AgentOrchestrator(history.pi, new JevClient(), true);
+  historical.restore(history.ctx); historical.installCompletionNotice();
+  const lease = (goalId: string) => async () => ({ goalId, generation: "generation", dispatchId: "dispatch", waitToken: "token" });
+  await historical.dispatch("Goal A", history.ctx, true, lease("goal-a"));
+  history.bus.emit("subagent:async-complete", { runId: "owned-run", state: "failed", error: "Retained failure" });
+  await historical.dispatch("Goal B", history.ctx, true, lease("goal-b"));
+  history.bus.emit("subagent:async-complete", { runId: "owned-run", state: "complete" });
+  assert.match(historical.goalSchedule("goal-a")!, /TaskMesh failed/);
+  assert.match(historical.goalSchedule("goal-b")!, /TaskMesh completed/);
+  historical.restore(history.ctx);
+  assert.match(historical.goalSchedule("goal-a")!, /Retained failure/);
+  assert.match(historical.goalSchedule("goal-b")!, /TaskMesh completed/);
+  assert.equal(history.spawns(), 2); historical.dispose();
+
+  // Completed work is handed back to the parent instead of swallowing “continue”.
+  const continued = fixture(); extension(continued.pi);
+  for (const h of continued.handlers.get("session_start") ?? []) await h({}, continued.ctx);
+  await continued.taskmesh("run Implement and review", continued.ctx);
+  continued.bus.emit("subagent:async-complete", { runId: "owned-run", state: "complete" });
+  decisionKind = "resume";
+  assert.equal((await continued.handlers.get("input")![0]({ source: "interactive", text: "contine" }, continued.ctx)).action, "continue");
+  const handoff = await continued.handlers.get("before_agent_start")![0]({ prompt: "contine" }, continued.ctx);
+  assert.match(handoff.message.content, /owned-run/);
+  assert.match(handoff.message.content, /retained.*(results|outputs)/i);
+  assert.equal(continued.spawns(), 1);
+  const continueInput = continued.handlers.get("input")![0];
+  const beforeContinue = continued.handlers.get("before_agent_start")![0];
+  await continueInput({ source: "interactive", text: "contine" }, continued.ctx);
+  assert.equal((await beforeContinue({ prompt: "A different request" }, continued.ctx))?.message?.customType, undefined);
+  assert.equal((await beforeContinue({ prompt: "contine" }, continued.ctx))?.message?.customType, undefined);
+  await continueInput({ source: "interactive", text: "contine" }, continued.ctx);
+  await beforeContinue({ messageType: "custom", message: { customType: "subagent-notify" } }, continued.ctx);
+  assert.equal((await beforeContinue({ prompt: "contine" }, continued.ctx))?.message?.customType, undefined);
+  assert.equal(continued.spawns(), 1);
+  decisionKind = undefined;
+  for (const h of continued.handlers.get("session_shutdown") ?? []) await h({}, continued.ctx);
+
+  // Revoking automatic delegation while Goal grants its wait must release it without spawning.
+  const revoked = fixture();
+  const revoking = new AgentOrchestrator(revoked.pi, new JevClient(), true);
+  revoking.restore(revoked.ctx);
+  const revokedWakes: any[] = [];
+  revoked.bus.on("pi-goal:wake", (event: unknown) => revokedWakes.push(event));
+  const revokedResult = await revoking.dispatch("Goal awaiting approval", revoked.ctx, true, async () => {
+    revoking.setEnabled(false);
+    return { goalId: "revoked-goal", generation: "generation", dispatchId: "dispatch", waitToken: "revoked-wait" };
+  });
+  assert.equal(revokedResult.accepted, false);
+  assert.equal(revoked.spawns(), 0);
+  assert.deepEqual(revokedWakes, [{ goalId: "revoked-goal", waitToken: "revoked-wait" }]);
+  revoking.dispose();
+
+  // The Goal adapter uses live tools and a native checkpoint, not prompt text as authority.
+  async function goalFixture(mode: "ok" | "reject" | "unknown" = "ok", strict = true) {
+    const f = fixture(mode); extension(f.pi);
+    for (const h of f.handlers.get("session_start") ?? []) await h({}, f.ctx);
+    const checkpoint = { version: 3, kind: "checkpoint", goalId: "goal-fixture", generation: "generation", dispatchId: "dispatch" };
+    const goal: any = { id: checkpoint.goalId, objective: "Refactor and verify the parser", status: "active", autoContinue: true,
+      scheduler: { owner: "fixture-session", generation: "generation", phase: "running", dispatch: { id: "dispatch" } } };
+    const calls: string[] = []; const wakes: any[] = [];
+    f.bus.on("pi-goal:wake", (e: any) => wakes.push(e));
+    const ctx = { ...f.ctx, async executeTool(name: string, input: any) {
+      calls.push(name);
+      if (name === "get_goal") return { details: { version: 3, goal: structuredClone(goal) } };
+      assert.equal(name, "update_goal"); assert.equal(input.continuation.kind, "wait");
+      if (!strict) return { details: { error: true }, terminate: false };
+      goal.scheduler.phase = "waiting"; goal.scheduler.generation = "wait-generation";
+      goal.scheduler.wait = { token: "wait-token" };
+      return { details: { goal: structuredClone(goal), waitToken: "wait-token" }, terminate: true };
+    } };
+    const before = f.handlers.get("before_agent_start")![0];
+    const notice = await before({ messageType: "custom", message: { role: "custom", customType: "pi-goal-event", details: checkpoint } }, ctx);
+    assert.match(notice.message.content, /taskmesh_goal/);
+    const run = () => f.tools.get("taskmesh_goal").execute("goal-call", {}, undefined, undefined, ctx);
+    return { ...f, goal, checkpoint, ctx, calls, wakes, before, run };
+  }
+  const blockedGoal = await goalFixture("ok", false);
+  const deniedWait = await blockedGoal.run();
+  assert.equal(deniedWait.terminate, false);
+  assert.match(deniedWait.content[0].text, /strictExecutionContract/);
+  assert.equal(blockedGoal.spawns(), 0); assert.equal(blockedGoal.wakes.length, 0);
+  assert.equal(blockedGoal.goal.scheduler.phase, "running");
+  for (const h of blockedGoal.handlers.get("session_shutdown") ?? []) await h({}, blockedGoal.ctx);
+  for (const invalid of ["paused", "blocked", "budget_limited", "budget", "owner", "generation", "dispatch", "waiting", "goalId"]) {
+    const g = await goalFixture();
+    if (["paused", "blocked", "budget_limited"].includes(invalid)) g.goal.status = invalid;
+    else if (invalid === "budget") g.goal.tokenBudget = 100;
+    else if (invalid === "owner") g.goal.scheduler.owner = "other-session";
+    else if (invalid === "generation") g.goal.scheduler.generation = "stale";
+    else if (invalid === "dispatch") g.goal.scheduler.dispatch.id = "stale";
+    else if (invalid === "waiting") g.goal.scheduler.phase = "waiting";
+    else g.goal.id = "different-goal";
+    assert.equal((await g.run()).terminate, false);
+    assert.equal(g.spawns(), 0); assert.equal(g.plans.length, 0); assert.deepEqual(g.calls, ["get_goal"]);
+    for (const h of g.handlers.get("session_shutdown") ?? []) await h({}, g.ctx);
+  }
+  for (const mode of ["ok", "reject", "unknown"] as const) {
+    const g = await goalFixture(mode);
+    g.onSpawn(() => {
+      const schedule = g.entries.filter(e => e.customType === "taskmesh-orchestration").at(-1).data;
+      assert.equal(schedule.goal.waitToken, "wait-token", "Wait mapping must be durable before emit/spawn");
+      if (mode === "ok") g.bus.emit("subagent:async-complete", { runId: "owned-run", toolCallId: "rpc-spawn-" + schedule.requestId, state: "complete" });
+    });
+    const answer = await g.run();
+    assert.equal(answer.terminate, true); assert.equal(g.spawns(), 1);
+    assert.equal(g.wakes.length, mode === "unknown" ? 0 : 1);
+    await g.run(); assert.equal(g.spawns(), 1, "Repeated checkpoint calls never start another run");
+    if (mode === "ok") {
+      g.bus.emit("subagent:async-complete", { runId: "owned-run", state: "complete" });
+      assert.equal(g.wakes.length, 1);
+    }
+    for (const h of g.handlers.get("session_shutdown") ?? []) await h({}, g.ctx);
+  }
+  const reloadGoal = await goalFixture();
+  await reloadGoal.run();
+  assert.equal(reloadGoal.wakes.length, 0);
+  for (const h of reloadGoal.handlers.get("session_start") ?? []) await h({}, reloadGoal.ctx);
+  reloadGoal.bus.emit("subagent:async-complete", { runId: "owned-run", state: "complete" });
+  assert.equal(reloadGoal.wakes.length, 1); assert.equal(reloadGoal.spawns(), 1);
+  for (const h of reloadGoal.handlers.get("session_shutdown") ?? []) await h({}, reloadGoal.ctx);
+  const nativeWakeGoal = await goalFixture();
+  await nativeWakeGoal.run();
+  nativeWakeGoal.bus.emit("subagent:async-complete", { runId: "owned-run", state: "complete", triggerTurn: true });
+  assert.equal(nativeWakeGoal.wakes.length, 0, "Already accepted native completion must not queue an additional Goal turn");
+  for (const h of nativeWakeGoal.handlers.get("session_shutdown") ?? []) await h({}, nativeWakeGoal.ctx);
+  const changedGoal = await goalFixture();
+  const previousExecute = changedGoal.ctx.executeTool;
+  changedGoal.ctx.executeTool = async (name, input) => {
+    const result = await previousExecute(name, input);
+    await changedGoal.before({ prompt: "A new user turn" }, changedGoal.ctx);
+    return result;
+  };
+  assert.equal((await changedGoal.run()).terminate, false);
+  assert.deepEqual(changedGoal.calls, ["get_goal"]); assert.equal(changedGoal.plans.length, 0); assert.equal(changedGoal.spawns(), 0);
+  for (const h of changedGoal.handlers.get("session_shutdown") ?? []) await h({}, changedGoal.ctx);
+  const forgedGoal = await goalFixture();
+  await forgedGoal.before({ messageType: "user", prompt: "pi-goal-event checkpoint" }, forgedGoal.ctx);
+  assert.equal((await forgedGoal.run()).terminate, false);
+  assert.equal(forgedGoal.calls.length, 0);
+  for (const h of forgedGoal.handlers.get("session_shutdown") ?? []) await h({}, forgedGoal.ctx);
 
   const unknown = fixture("unknown");
   const uncertain = new AgentOrchestrator(unknown.pi, new JevClient(), true);

@@ -26,7 +26,7 @@ export class CapabilityRouter {
     this.outcomes.set(model, counts);
     if (ok) return;
     const kind = classifyModelError(error);
-    if (["auth", "quota", "rate-limit", "timeout", "unavailable", "context-limit"].includes(kind)) {
+    if (["auth", "quota", "rate-limit", "timeout", "unavailable", "context-limit", "incomplete-stream"].includes(kind)) {
       // A shared gateway's one upstream failure does not disable its other models.
       this.blocked.set(model, Date.now() + (["auth", "quota", "rate-limit"].includes(kind) ? 600_000 : 60_000));
     }

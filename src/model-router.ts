@@ -2,7 +2,7 @@ import type { ExtensionContext, ExtensionAPI } from "@earendil-works/pi-coding-a
 import type { Model } from "@earendil-works/pi-ai";
 
 export type ModelProfile = "fast" | "balanced" | "reasoning" | "long-context" | "vision";
-export type ModelErrorKind = "quota" | "rate-limit" | "context-limit" | "unavailable" | "timeout" | "auth" | "unknown";
+export type ModelErrorKind = "quota" | "rate-limit" | "context-limit" | "unavailable" | "timeout" | "auth" | "incomplete-stream" | "unknown";
 
 export interface ModelRouteResult {
   changed: boolean;
@@ -34,6 +34,7 @@ export function classifyModelError(error: unknown): ModelErrorKind {
   if (/quota|credit|billing|insufficient.*fund|resource_exhausted/.test(text)) return "quota";
   if (/rate.?limit|too many requests|429/.test(text)) return "rate-limit";
   if (/timeout|timed out|deadline/.test(text)) return "timeout";
+  if (/reply ended before it was complete|stream (ended|closed|terminated) (early|prematurely)|incomplete[ _-]stream/.test(text)) return "incomplete-stream";
   if (/auth|unauthorized|forbidden|api key|401|403/.test(text)) return "auth";
   if (/model.*(not found|unavailable)|not available|503|502/.test(text)) return "unavailable";
   return "unknown";
