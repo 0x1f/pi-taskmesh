@@ -456,7 +456,7 @@ try {
   const sequential = taskBatches(validatePlan(rawPlan), 1);
   assert.deepEqual(sequential.map(batch => batch.map(task => task.id)), [["inspect"], ["research"], ["implement"], ["review"]]);
   assert.throws(() => taskBatches(plan, 0), /concurrency/);
-  assert.throws(() => taskBatches(plan, 4), /concurrency/);
+  assert.throws(() => taskBatches(plan, 7), /concurrency/);
   const shared = new CapabilityRouter();
   const sharedCtx = { ...f.ctx, modelRegistry: { getAvailable: () => models.map(m => ({ ...m, provider: "magpie" })) } } as any;
   shared.record("magpie/quick", false, "HTTP 429 rate limit");
@@ -607,6 +607,21 @@ try {
   assert.deepEqual(completeBackend("back").map((item: any) => item.value), ["backend"]);
   assert.deepEqual(completeBackend("backend ").map((item: any) => item.value), ["backend pi", "backend jev"]);
   assert.deepEqual(completeBackend("backend j").map((item: any) => item.value), ["backend jev"]);
+  assert.deepEqual(completeBackend("concurrency a").map((item: any) => item.value), ["concurrency auto"]);
+  const savedConcurrency = readFileSync(backendSettings.path, "utf8");
+  await backend.taskmesh("concurrency", backend.ctx);
+  assert.equal(readFileSync(backendSettings.path, "utf8"), savedConcurrency);
+  for (const value of ["0", "7", "1.5", "2 extra", "off"]) {
+    await backend.taskmesh("concurrency " + value, backend.ctx);
+    assert.match(backend.notices.at(-1)!, /Usage:.*concurrency/);
+    assert.equal(readFileSync(backendSettings.path, "utf8"), savedConcurrency);
+  }
+  for (const value of ["auto", "6", "2"]) {
+    await backend.taskmesh("concurrency " + value, backend.ctx);
+    assert.equal(new TaskMeshSettings().value.maxConcurrency, value === "auto" ? "auto" : Number(value));
+    assert.equal(new TaskMeshSettings().value.enabled, false);
+    assert.equal(JSON.parse(readFileSync(backendSettings.path, "utf8")).keep, 42);
+  }
   const beforeQuery = readFileSync(backendSettings.path, "utf8");
   await backend.taskmesh("backend", backend.ctx);
   assert.match(backend.notices.at(-1)!, /Decision backend: pi/);
@@ -634,6 +649,10 @@ try {
   assert.equal(backend.plans.length, 1);
   const beforeFailure = readFileSync(backendSettings.path, "utf8");
   writeFileSync(backendSettings.path, "invalid JSON");
+  await backend.taskmesh("concurrency auto", backend.ctx);
+  assert.match(backend.notices.at(-1)!, /global save failed/);
+  await backend.taskmesh("concurrency", backend.ctx);
+  assert.match(backend.notices.at(-1)!, /Readers: 2/);
   await backend.taskmesh("backend jev", backend.ctx);
   assert.match(backend.notices.at(-1)!, /global save failed/);
   await backend.taskmesh("backend", backend.ctx);
@@ -646,6 +665,10 @@ try {
   await backend.taskmesh("explain", backend.ctx);
   assert.match(backend.notices.at(-1)!, /State: running \| Run: owned-run/);
   assert.equal(backend.spawns(), 1, "Switching backend must not restart an active run");
+  const retainedScript = backend.requests.find((r: any) => r.method === "spawn").params.script;
+  await backend.taskmesh("concurrency auto", backend.ctx);
+  assert.equal(backend.spawns(), 1);
+  assert.equal(backend.requests.find((r: any) => r.method === "spawn").params.script, retainedScript);
   for (const handler of backend.handlers.get("session_shutdown") ?? []) await handler({}, backend.ctx);
   new TaskMeshSettings().save({ enabled: true });
   process.env.PI_TASKMESH = "off";
@@ -657,12 +680,35 @@ try {
   for (const handler of backendOff.handlers.get("session_shutdown") ?? []) await handler({}, backendOff.ctx);
   delete process.env.PI_TASKMESH;
 
+  // Goal dispatch uses the same per-node Jev routing, without replacing the main model.
+  new TaskMeshSettings().save({ enabled: true, decisionBackend: "jev", maxConcurrency: "auto" });
+  const mixedGoal = await goalFixture();
+  mixedGoal.goal.currentTaskId = "parser";
+  mixedGoal.goal.taskList = { tasks: [{ id: "baseline", status: "complete", evidence: "frozen report" }, { id: "parser", status: "pending" }] };
+  const preservedProgress = structuredClone(mixedGoal.goal.taskList);
+  const judgmentsBefore = jevCalls;
+  assert.equal((await mixedGoal.run()).terminate, true);
+  assert.equal(jevCalls - judgmentsBefore, 2, "One assessment and one batched model choice");
+  const goalSchedule = mixedGoal.entries.filter(e => e.customType === "taskmesh-orchestration").at(-1).data;
+  assert.equal(goalSchedule.goal.goalId, mixedGoal.goal.id);
+  assert.deepEqual(goalSchedule.plan.tasks.map((t: any) => t.model), ["alpha/quick", "alpha/quick", "beta/deep", "gamma/deep"]);
+  assert.deepEqual(mixedGoal.goal.taskList, preservedProgress);
+  const goalModels: string[] = [];
+  const goalScript = mixedGoal.requests.find((r: any) => r.method === "spawn").params.script;
+  await new AsyncFunction("runs", goalScript)({ async run(_id: string, params: any) {
+    goalModels.push(params.model);
+    return { ok: true, output: "owned Goal test evidence" };
+  } });
+  assert.deepEqual(goalModels, ["alpha/quick", "alpha/quick", "beta/deep", "gamma/deep"]);
+  console.log("PASS: Goal checkpoint -> actual TaskMesh -> batched fake Jev -> distinct per-node models; progress preserved, no live models or children.");
+  for (const h of mixedGoal.handlers.get("session_shutdown") ?? []) await h({}, mixedGoal.ctx);
+
   const configured = new TaskMeshSettings();
   writeFileSync(configured.path, JSON.stringify({ enabled: true, keep: 42 }));
   configured.save({ maxConcurrency: 1 });
   assert.equal(JSON.parse(readFileSync(configured.path, "utf8")).keep, 42);
   assert.equal(new TaskMeshSettings().value.maxConcurrency, 1);
-  assert.throws(() => configured.save({ maxConcurrency: 4 }), /Invalid taskmesh/);
+  for (const value of [0, 7, 1.5, "6", "AUTO", null]) assert.throws(() => configured.save({ maxConcurrency: value as any }), /Invalid taskmesh/);
   writeFileSync(configured.path, "invalid JSON");
   assert.equal(new TaskMeshSettings().value.enabled, false);
   assert.ok(new TaskMeshSettings().error);

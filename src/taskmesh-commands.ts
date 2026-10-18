@@ -2,13 +2,14 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { AgentOrchestrator } from "./orchestrator.js";
 
 export function registerTaskMeshCommands(pi: ExtensionAPI, agents: AgentOrchestrator): void {
-  const commands = ["on", "off", "backend", "status", "explain", "run", "resume", "help"];
-  const usage = "/taskmesh on|off|status|explain|resume, /taskmesh backend [pi|jev], /taskmesh run <task>";
+  const commands = ["on", "off", "backend", "concurrency", "status", "explain", "run", "resume", "help"];
+  const usage = "/taskmesh on|off|status|explain|resume, /taskmesh backend [pi|jev], /taskmesh concurrency [auto|1–6], /taskmesh run <task>";
   pi.registerCommand("taskmesh", {
     description: "Control TaskMesh orchestration and inspect task/model decisions",
     getArgumentCompletions(prefix) {
       const normalized = prefix.trimStart().toLowerCase();
-      const values = normalized.startsWith("backend ") ? ["backend pi", "backend jev"] : commands;
+      const values = normalized.startsWith("backend ") ? ["backend pi", "backend jev"] :
+        normalized.startsWith("concurrency ") ? ["auto", "1", "2", "3", "4", "5", "6"].map(value => "concurrency " + value) : commands;
       const matches = values.filter(value => value.startsWith(normalized));
       return matches.length ? matches.map(value => ({ value, label: value })) : null;
     },
@@ -34,6 +35,17 @@ export function registerTaskMeshCommands(pi: ExtensionAPI, agents: AgentOrchestr
         try {
           agents.configure({ decisionBackend: backend });
           ctx.ui.notify("TaskMesh decision backend saved globally as " + backend + ". Applies immediately to subsequent judgments; existing tasks continue.", "info");
+        } catch (error) { ctx.ui.notify("TaskMesh global save failed: " + String((error as Error).message ?? error), "error"); }
+        return;
+      }
+      if (sub === "concurrency") {
+        if (!rest) { ctx.ui.notify(agents.configuration(), "info"); return; }
+        const value = rest.toLowerCase();
+        if (value !== "auto" && !/^[1-6]$/.test(value)) { ctx.ui.notify("Usage: /taskmesh concurrency [auto|1–6]", "warning"); return; }
+        try {
+          agents.configure({ maxConcurrency: value === "auto" ? "auto" : Number(value) });
+          ctx.ui.notify("TaskMesh reader concurrency saved globally as " + value +
+            ". Applies to future plans only; writers remain exclusive and existing runs are unchanged.", "info");
         } catch (error) { ctx.ui.notify("TaskMesh global save failed: " + String((error as Error).message ?? error), "error"); }
         return;
       }

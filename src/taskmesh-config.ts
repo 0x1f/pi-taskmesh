@@ -6,7 +6,7 @@ export type DecisionBackend = "pi" | "jev";
 export interface TaskMeshConfig {
   enabled: boolean;
   decisionBackend: DecisionBackend;
-  maxConcurrency: number;
+  maxConcurrency: number | "auto";
 }
 const DEFAULTS: TaskMeshConfig = { enabled: false, decisionBackend: "pi", maxConcurrency: 3 };
 
@@ -26,8 +26,8 @@ export class TaskMeshSettings {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("taskmesh.json must be an object");
     const config = { ...DEFAULTS, ...raw };
     if (typeof config.enabled !== "boolean" || !["pi", "jev"].includes(config.decisionBackend) ||
-        !Number.isSafeInteger(config.maxConcurrency) || config.maxConcurrency < 1 || config.maxConcurrency > 3) {
-      throw new Error("Invalid taskmesh.json: enabled must be boolean, decisionBackend pi|jev, maxConcurrency 1–3");
+        (config.maxConcurrency !== "auto" && (!Number.isSafeInteger(config.maxConcurrency) || config.maxConcurrency < 1 || config.maxConcurrency > 6))) {
+      throw new Error("Invalid taskmesh.json: enabled must be boolean, decisionBackend pi|jev, maxConcurrency auto or 1–6");
     }
     return { enabled: config.enabled, decisionBackend: config.decisionBackend, maxConcurrency: config.maxConcurrency };
   }

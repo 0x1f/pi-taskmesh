@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { JevClient } from "./jev.js";
-import { CapabilityRouter } from "./capability-router.js";
+import { CapabilityRouter, recordModelLoad } from "./capability-router.js";
 import { classifyModelError } from "./model-router.js";
 import { conversationContext, planTasks, taskBatches, validatePlan, type TaskPlan } from "./task-planner.js";
 import { TaskMeshSettings, type TaskMeshConfig } from "./taskmesh-config.js";
@@ -18,7 +18,7 @@ interface Schedule {
 }
 
 /** Embed data as JS literals, never evaluate model-provided code or construct shell commands. */
-export function buildWorkflowScript(task: string, plan: TaskPlan, context = "", maxReaders = 3): string {
+export function buildWorkflowScript(task: string, plan: TaskPlan, context = "", maxReaders: TaskMeshConfig["maxConcurrency"] = 3): string {
   const batches = taskBatches(plan, maxReaders);
   if (plan.tasks.some(t => !t.model)) throw new Error("Every subtask needs an explicit model");
   return [
@@ -63,6 +63,7 @@ export class AgentOrchestrator {
   public configuration(): string {
     return "TaskMesh automatic delegation: " + (this.enabled ? "on (user opt-in)" : "off (explicit run only)") +
       " | Decision backend: " + this.settings.value.decisionBackend + " | Readers: " + this.settings.value.maxConcurrency +
+      (this.settings.value.maxConcurrency === "auto" ? " (up to 6 ready readers)" : "") +
       (this.settings.error ? "\nConfig error (automatic mode disabled): " + this.settings.error : "");
   }
   private active(schedule = this.last): boolean { return Boolean(schedule && ["running", "unknown", "paused"].includes(schedule.state)); }
@@ -182,11 +183,7 @@ export class AgentOrchestrator {
       const status = await this.request("status", {}, signal);
       const load = new Map<string, number>();
       for (const item of status.data?.fleet?.entries ?? []) {
-        if (typeof item.model === "string") {
-          load.set(item.model, (load.get(item.model) ?? 0) + 1);
-          const provider = "provider:" + item.model.split("/")[0];
-          load.set(provider, (load.get(provider) ?? 0) + 1);
-        }
+        if (typeof item.model === "string") recordModelLoad(load, item.model);
       }
       const context = conversationContext(ctx);
       const planners = this.router.ranked(ctx, "reasoning", Math.ceil(Buffer.byteLength(context + task, "utf8") / 3) + 2000, load);

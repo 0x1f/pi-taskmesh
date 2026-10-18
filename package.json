@@ -1,6 +1,6 @@
 {
   "name": "pi-taskmesh",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "description": "Task-aware adaptive multi-model orchestration for Pi with optional Jev judgments",
   "type": "module",
   "main": "extensions/index.ts",
@@ -34,7 +34,7 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsc --noEmit false --outDir .test-build && node .test-build/test/persistence.js && node .test-build/test/orchestration.js",
+    "test": "tsc --noEmit false --outDir .test-build && node .test-build/test/persistence.js && node .test-build/test/orchestration.js && node .test-build/test/routing.js && node .test-build/test/concurrency.js",
     "test:native": "tsc --noEmit false --outDir .test-build && node test/native-workflow.mjs",
     "test:goal": "tsc --noEmit false --outDir .test-build && node test/native-goal.mjs",
     "test:host": "node test/native-host.mjs",

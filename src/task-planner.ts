@@ -63,16 +63,16 @@ export function validatePlan(raw: unknown): TaskPlan {
   return result;
 }
 
-/** At most three readers together; writers always have exclusive access to the cwd. */
-export function taskBatches(plan: TaskPlan, maxReaders = 3): PlannedTask[][] {
-  if (!Number.isSafeInteger(maxReaders) || maxReaders < 1 || maxReaders > 3) throw new Error("Reader concurrency must be 1–3");
+/** Auto follows the ready graph width (at most six tasks); writers remain exclusive. */
+export function taskBatches(plan: TaskPlan, maxReaders: number | "auto" = 3): PlannedTask[][] {
+  if (maxReaders !== "auto" && (!Number.isSafeInteger(maxReaders) || maxReaders < 1 || maxReaders > 6)) throw new Error("Reader concurrency must be auto or 1–6");
   const done = new Set<string>();
   const batches: PlannedTask[][] = [];
   while (done.size < plan.tasks.length) {
     const ready = plan.tasks.filter(t => !done.has(t.id) && t.dependsOn.every(d => done.has(d)));
     if (!ready.length) throw new Error("Cyclic task dependencies");
     const readers = ready.filter(t => !t.writes);
-    const batch = readers.length ? readers.slice(0, maxReaders) : [ready[0]];
+    const batch = readers.length ? readers.slice(0, maxReaders === "auto" ? 6 : maxReaders) : [ready[0]];
     batches.push(batch);
     for (const t of batch) done.add(t.id);
   }

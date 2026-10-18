@@ -23,7 +23,7 @@ if (!mode) {
   }
   try {
     writeFileSync(join(root, "jev.json"), JSON.stringify({ vercel: { model: "custom-model" }, keep: 42 }));
-    for (const phase of ["save", "overrides", "restore", "restore-off", "enable", "restore-enabled", "taskmesh-on", "taskmesh-on-restored", "taskmesh-off-restored", "failure"]) {
+    for (const phase of ["save", "overrides", "restore", "restore-off", "enable", "restore-enabled", "taskmesh-on", "taskmesh-on-restored", "taskmesh-off-restored", "concurrency-save", "concurrency-restored", "failure"]) {
       const child = spawnSync(process.execPath, [fileURLToPath(import.meta.url), phase], { env, encoding: "utf8" });
       assert.equal(child.status, 0, `${phase}: ${child.stdout}\n${child.stderr}`);
     }
@@ -114,6 +114,14 @@ if (!mode) {
     assert.match(notices.at(-1)!, /off \(explicit run only\)/);
     assert.match(notices.at(-1)!, /Decision backend: pi/);
     assert.equal(new TaskMeshSettings().value.enabled, false);
+  } else if (mode === "concurrency-save") {
+    await taskmesh!("concurrency auto", ctx);
+    assert.equal(new TaskMeshSettings().value.maxConcurrency, "auto");
+  } else if (mode === "concurrency-restored") {
+    await taskmesh!("concurrency", ctx);
+    assert.match(notices.at(-1)!, /Readers: auto/);
+    assert.equal(new TaskMeshSettings().value.enabled, false);
+    assert.equal(new TaskMeshSettings().value.decisionBackend, "pi");
   } else if (mode === "failure") {
     const blocked = join(process.env.PI_CODING_AGENT_DIR!, "blocked");
     writeFileSync(blocked, "not a directory");

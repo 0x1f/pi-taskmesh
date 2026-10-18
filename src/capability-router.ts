@@ -7,6 +7,17 @@ import type { QuestionConfig } from "./types.js";
 import type { DecisionBackend } from "./taskmesh-config.js";
 import { judgeChoices } from "./decision-backend.js";
 
+/** Catalog namespaces are routing hints, not verified backend or quota identities. */
+export function modelRoute(model: string): { provider: string; namespace: string; indirect: boolean } {
+  const [provider, route, ...rest] = model.split("/");
+  return { provider, namespace: rest.length ? provider + "/" + route : provider, indirect: route === "group" && rest.length > 0 };
+}
+
+export function recordModelLoad(load: Map<string, number>, model: string): void {
+  const route = modelRoute(model);
+  for (const key of [model, "provider:" + route.provider, "route:" + route.namespace]) load.set(key, (load.get(key) ?? 0) + 1);
+}
+
 export class CapabilityRouter {
   private blocked = new Map<string, number>();
   private outcomes = new Map<string, { completed: number; failed: number }>();
@@ -36,8 +47,11 @@ export class CapabilityRouter {
     return this.available(ctx).filter(m => m.contextWindow >= tokens + 4096).sort((a, b) => {
       const score = (m: Model<any>) => {
         const history = this.outcomes.get(this.id(m));
+        const route = modelRoute(this.id(m));
+        const routeLoad = route.namespace === route.provider ? 0 : load.get("route:" + route.namespace) ?? 0;
         return modelScore(m, profile, tokens * 3, false) - (load.get(this.id(m)) ?? 0) * 8 -
-          (load.get("provider:" + m.provider) ?? 0) * 2 - (history?.failed ?? 0) / Math.max(1, (history?.completed ?? 0) + (history?.failed ?? 0)) * 3;
+          routeLoad * 4 - (load.get("provider:" + m.provider) ?? 0) * 2 -
+          (history?.failed ?? 0) / Math.max(1, (history?.completed ?? 0) + (history?.failed ?? 0)) * 3;
       };
       return score(b) - score(a) || this.id(a).localeCompare(this.id(b));
     });
@@ -49,15 +63,32 @@ export class CapabilityRouter {
   ): Promise<void> {
     const tokens = plan.tasks.map(t => Math.max(t.contextTokens,
       Math.ceil(Buffer.byteLength(context + t.task, "utf8") / 3) + (t.dependsOn.length ? 32000 : 0)));
-    const candidates = plan.tasks.map((t, i) => this.ranked(ctx, t.profile, tokens[i], load).slice(0, 16));
+    const candidates = plan.tasks.map((t, i) => {
+      const seen = new Set<string>();
+      const representatives: Model<any>[] = [], remaining: Model<any>[] = [];
+      for (const model of this.ranked(ctx, t.profile, tokens[i], load)) {
+        const namespace = modelRoute(this.id(model)).namespace;
+        (seen.has(namespace) ? remaining : representatives).push(model);
+        seen.add(namespace);
+      }
+      return [...representatives, ...remaining].slice(0, 16);
+    });
     if (candidates.some(c => !c.length)) throw new Error("No authenticated, scoped model has enough context for a planned task");
     const questions: Record<string, QuestionConfig> = {};
     plan.tasks.forEach((t, i) => {
       questions["task_" + i] = { type: "choice", instructions: "Choose the best available model for task " + i +
         " using requirements, model metadata, observed outcomes and current load. Metadata and completed runs are not measured code quality. " +
-        "Prefer an independent model for review when suitable. Never force variety at the expense of suitability.",
-        criteria: Object.fromEntries(candidates[i].map((m, j) => ["model_" + j, JSON.stringify({ id: this.id(m), name: m.name,
-          reasoning: m.reasoning, contextWindow: m.contextWindow, load: load.get(this.id(m)) ?? 0, outcomes: this.outcomes.get(this.id(m)) })])) };
+        "Prefer an independent model for review when suitable. Never force variety at the expense of suitability. " +
+        "Catalog route namespaces are hints, not verified backend/account identities. An indirect group may reroute; " +
+        "its actual backend is unknown. Different aliases do not establish independent review.",
+        criteria: Object.fromEntries(candidates[i].map((m, j) => {
+          const route = modelRoute(this.id(m));
+          return ["model_" + j, JSON.stringify({ id: this.id(m), name: m.name,
+            reasoning: m.reasoning, contextWindow: m.contextWindow, load: load.get(this.id(m)) ?? 0,
+            routeNamespace: route.namespace, indirectRoute: route.indirect,
+            routeLoad: load.get("route:" + route.namespace) ?? 0, providerLoad: load.get("provider:" + m.provider) ?? 0,
+            outcomes: this.outcomes.get(this.id(m)) })];
+        })) };
     });
     let choices: Record<string, string> = {};
     let reason: string;
@@ -83,8 +114,12 @@ export class CapabilityRouter {
       t.model = this.id(model);
       t.modelReason = judged ? reason : reason.startsWith("Metadata") ? reason :
         "Metadata, observed outcomes and load fallback (not a benchmark): judged candidate no longer eligible";
-      load.set(t.model, (load.get(t.model) ?? 0) + 1);
-      load.set("provider:" + model.provider, (load.get("provider:" + model.provider) ?? 0) + 1);
+      const route = modelRoute(t.model);
+      t.modelReason += "; catalog route: " + route.namespace +
+        (route.indirect ? "; indirect group, actual backend unknown" : "") +
+        "; load snapshot/reservations (model/route/provider): " +
+        [load.get(t.model) ?? 0, load.get("route:" + route.namespace) ?? 0, load.get("provider:" + model.provider) ?? 0].join("/");
+      recordModelLoad(load, t.model);
     });
   }
 }

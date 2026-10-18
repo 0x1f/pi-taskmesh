@@ -24,6 +24,8 @@ assert.match(bad.errors.map(error => error.message).join("\n"), /nested async/i)
 let active = 0;
 let maximum = 0;
 const calls = [];
+let releaseReaders;
+const readersReady = new Promise(resolve => { releaseReaders = resolve; });
 const result = await runWorkflowScript({
   script, timeoutMs: 10000,
   async launch(key, params, signal) {
@@ -41,7 +43,7 @@ const result = await runWorkflowScript({
       for (const dependency of ["a", "b", "c"]) assert.ok(params.task.includes(dependency + ": evidence-" + dependency));
     }
     if (key === "review") { assert.equal(active, 1); assert.match(params.task, /fix: evidence-fix/); }
-    await new Promise(setImmediate);
+    if (key === "a" || key === "b") { if (active === 2) releaseReaders(); await readersReady; }
     active--;
     return { key, ok: true, output: "evidence-" + key, artifactPaths: [] };
   },
@@ -63,4 +65,35 @@ await assert.rejects(runWorkflowScript({
   return true;
 });
 assert.equal(failedCalls, 2);
-console.log("PASS: installed native workflow validator + sandbox, negative dialect control, exact models, reader limit, exclusive writer, dependent evidence and stop without replay; zero real children.");
+const widePlan = validatePlan({ reason: "All independent readers", tasks: Array.from({ length: 6 }, (_, i) => ({
+  id: "read_" + i, agent: "scout", task: "Inspect area " + i, dependsOn: [], profile: "fast", contextTokens: 1000,
+})) });
+for (const task of widePlan.tasks) task.model = "reader/" + task.id;
+const mixedPlan = validatePlan({ reason: "Four readers, writer, reviewer", tasks: [
+  ...widePlan.tasks.slice(0, 4),
+  { id: "write", agent: "worker", task: "Apply minimal fix", dependsOn: widePlan.tasks.slice(0, 4).map(t => t.id), profile: "reasoning", contextTokens: 1000 },
+  { id: "review", agent: "reviewer", task: "Verify", dependsOn: ["write"], profile: "reasoning", contextTokens: 1000 },
+] });
+for (const task of mixedPlan.tasks) task.model = task.agent + "/" + task.id;
+for (const [autoPlan, expectedPeak, globalConcurrencyLimit] of [[widePlan, 6], [mixedPlan, 4], [widePlan, 2, 2]]) {
+  const autoScript = buildWorkflowScript("Bounded auto concurrency", autoPlan, "", "auto");
+  assert.equal(validateWorkflowScript(autoScript).ok, true);
+  let active = 0, peak = 0;
+  const done = new Set();
+  let release;
+  const readersReady = new Promise(resolve => { release = resolve; });
+  await runWorkflowScript({ script: autoScript, timeoutMs: 10000, globalConcurrencyLimit, async launch(key, params) {
+    const task = autoPlan.tasks.find(t => t.id === key);
+    active++; peak = Math.max(peak, active);
+    assert.equal(params.model, task.model);
+    assert.ok(task.dependsOn.every(id => done.has(id)));
+    if (task.writes) assert.equal(active, 1);
+    // A barrier proves admission width without relying on worker message timing.
+    if (!task.dependsOn.length) { if (active === expectedPeak) release(); await readersReady; }
+    active--; done.add(key);
+    return { key, ok: true, output: "synthetic evidence", artifactPaths: [] };
+  }, async status() { throw new Error("Unexpected status polling"); } });
+  assert.equal(peak, expectedPeak);
+  assert.equal(done.size, autoPlan.tasks.length);
+}
+console.log("PASS: installed native workflow validator + sandbox, exact models, fixed and auto (six/four) reader width, executor cap two, exclusive writer, dependencies and failure without replay; zero real children.");

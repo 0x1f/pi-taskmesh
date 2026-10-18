@@ -2,7 +2,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-Task-aware, multi-model orchestration for Pi. Version **0.8.1** evolves the existing pi-jev-multi-provider extension: TaskMesh handles task decomposition, routing and execution coordination; Jev is an optional judgment backend and compatibility feature set.
+Task-aware, multi-model orchestration for Pi. Version **0.9.0** evolves the existing pi-jev-multi-provider extension: TaskMesh handles task decomposition, routing and execution coordination; Jev is an optional judgment backend and compatibility feature set.
 
 The default path uses chat models already authenticated in Pi. **No Jev key is required.** This package does not register chat providers or include a subagent executor.
 
@@ -41,6 +41,7 @@ Please inspect this project and implement the requested change with verification
 | --- | --- |
 | `/taskmesh on`, `/taskmesh off` | Save the global automatic-delegation preference. |
 | `/taskmesh backend [pi\|jev]` | Show or switch the judgment backend; save globally and apply immediately to subsequent judgments. |
+| `/taskmesh concurrency [auto\|1–6]` | Show or save reader concurrency; applies to future plans, not running workflows. |
 | `/taskmesh run <task>` | Explicitly authorize and start one workflow while the main agent is idle. |
 | `/taskmesh status` | Show configuration and query the current native run, if any. |
 | `/taskmesh explain` | Show the last decision, task graph, models, selection basis and launch state. |
@@ -57,7 +58,16 @@ Global settings live in `~/.pi/agent/taskmesh.json`, or `$PI_CODING_AGENT_DIR/ta
 }
 ```
 
-`maxConcurrency` is the number of concurrent read tasks, from 1 to 3. Writers run exclusively. Use `/taskmesh backend jev` only after configuring Jev, or `/taskmesh backend pi` to return to Pi judgments. Backend commands apply immediately without changing the automatic-delegation switch; direct file edits require a reload. Command saves are atomic, preserve unrelated fields, and report errors; invalid settings disable automatic delegation until repaired.
+`maxConcurrency` is a reader ceiling of 1–6 (default 3), or `"auto"`. Auto uses each dependency-ready reader batch\'s width, at most six because plans contain at most six tasks. It does not spawn extra tasks to fill slots. Writers run exclusively, dependencies remain ordered, and lower native executor limits still apply. This is graph-width adaptation, not a latency/quota-aware controller. More concurrent readers may increase resource use and rate-limit pressure. Use `/taskmesh backend jev` only after configuring Jev, or `/taskmesh backend pi` to return to Pi judgments. Backend commands apply immediately without changing the automatic-delegation switch; direct file edits require a reload. Command saves are atomic, preserve unrelated fields, and report errors; invalid settings disable automatic delegation until repaired.
+
+To select auto concurrency without editing JSON:
+
+```text
+/taskmesh concurrency auto
+/taskmesh concurrency
+```
+
+Use `/taskmesh concurrency 3` to return to the default ceiling. This preserves the backend and opt-in, does not replan/restart running workflows, and does not enable Goal's separate wait policy. Existing installations keep their saved numeric ceiling until explicitly changed.
 
 Use `PI_TASKMESH=1` or `--taskmesh` for a startup opt-in; `PI_TASKMESH=off` overrides a saved default after restarting. Old `jev.json.features.autoAgents`, `PI_JEV_AGENTS` and `--jev-agents` no longer initialize the new core. The interactive `/jev auto-agents on|off` compatibility command still saves the TaskMesh preference. Automatic orchestration is independent of `/jev auto` and `/jev auto-model`. Concurrent config saves use last-writer-wins; atomic replacement prevents partial files, not simultaneous-update loss.
 
@@ -82,6 +92,10 @@ Jev judges whether an eligible request should be delegated and selects models fo
 4. The generated script runs through native `pi-subagents`. Readers can run in parallel, workers run exclusively in the shared cwd, and dependency outputs reach later tasks. Read-only task instructions are advisory; enforce filesystem permissions or sandboxing separately when needed. Children receive bounded context rather than a full session fork.
 5. A reported failure cools down that exact `provider/model`. Incomplete streams such as `Antigravity: the reply ended before it was complete` are classified as `incomplete-stream` and cool down that model for 60 seconds. Other models behind the same gateway remain eligible. Runtime completion/failure counts are not quality scores and reset on session reload.
 
+The 16-candidate shortlist first takes the highest-ranked representative of different catalog route namespaces, then fills remaining slots by score. Large virtual-group families therefore do not crowd out every other route. Load scoring distinguishes model, catalog namespace and gateway/provider; `/taskmesh explain` includes that snapshot plus planned reservations. For example, `gateway/upstream/model` uses `gateway/upstream` as a routing hint. These prefixes are **not verified upstream, account or quota identities**, and fleet load is only the executor's reported snapshot, not a global reservation service.
+
+Known `*/group/*` entries remain selectable inside the user's scope but are marked indirect: the executing backend is unknown and two aliases do not prove independent review. No concrete execution model names or task-to-model tables are hardcoded. Scope, context admission and exact-model cooldown remain hard filters; namespace diversity never adds ineligible models or extra judgment calls.
+
 Each pure Pi inference tries at most two models with a 30-second limit per attempt. Planning and model selection happen before child launch. There is **no automatic replay of child work or a launch with an unknown outcome**. A missing spawn reply is retained with its request ID and blocks another workflow until authoritative native status or completion resolves it. Legacy `jev-orchestration` session entries still restore; new entries use `taskmesh-orchestration`.
 
 Native `pi-subagents` owns child execution, completion notification and result delivery. `resume` inspects/reconnects; it does not restart failed/paused workflows or relaunch unfinished side effects. Retained-child continuation requires the native executor's explicit controls. Without a compatible executor, the capability check fails after about 10 seconds and no child is launched.
@@ -99,6 +113,8 @@ With `/taskmesh on`, a version-3 checkpoint from a compatible `pi-goal-x` uses t
 **Existing unfinished Goals work without recreation or migration.** Reload the extension at a safe point; the next native checkpoint reads the same Goal ID, completed task evidence, current task and accumulated usage. TaskMesh passes the current task and existing progress to planning; it does not reset them or rerun completed steps on its own. A paused Goal still needs the user to resume it through Goal\'s normal controls; a completed Goal is not reopened. The wait-policy and budget restrictions below also apply to existing Goals.
 
 `taskmesh_goal` must be a **standalone direct model tool call**, not `tools.taskmesh_goal()` inside `codemode` and not a slash command. Its model-only exposure deliberately excludes it from `ALL_TOOLS` and codemode discovery, preserving native end-turn/wait semantics. The tested Pi-Bolt declares it directly in both codemode `on` and `only` modes. If it is missing from the model\'s declared tools, reload/check the extension rather than inventing a nested or shell fallback. Version 0.8.1 also corrects the native `ctx.executeTool` result envelope; 0.8.0 could incorrectly reject a valid existing Goal as stale.
+
+Goal-derived tasks use the same per-node routing and reader concurrency setting. Scout, implementation and review can receive different authenticated, scoped models; they are not forced to share the parent model, nor forced to differ. Changing concurrency affects only a future plan, not the retained Goal workflow.
 
 Before any child launch, `update_goal` must accept a native `wait` disposition and return its wait token. In the tested Goal 0.32.3, new waits require the existing `strictExecutionContract` opt-in, which defaults to `false`. To opt into that Goal policy, merge this existing setting into the project's `.pi/pi-goal-x-settings.json` or the global `~/.pi/agent/pi-goal-x-settings.json`:
 
@@ -318,5 +334,7 @@ npm run smoke        # requires pi-bolt; private offline startup only
 The lockfile fixes development dependencies, including Pi SDK 0.85.0; typechecking against that SDK does not establish support for every Pi version. The extension declares Node >=20.3; the host may require a newer Node. The native workflow test accepts a package directory as its first argument or `PI_SUBAGENTS_DIR`; the Goal test accepts `PI_GOAL_DIR` or its first argument. The Goal test uses the installed scheduler/runtime with a synthetic store and fake executor, including default-policy refusal, accepted wait, early/late completion, wrong tokens, native-notification takeover and budget/allowance refusal.
 
 The host tool test runs both codemode modes with synthetic streamed tool calls, exercises native nested-tool result envelopes and outer wait termination, and includes codemode misuse and rejected-tool negative controls. The native Goal tests also retain pre-existing completed tasks, current-task focus, token/time usage and autonomous-run accounting. Neither test opens or edits a real Goal.
+
+Offline regressions additionally cover large alias catalogs, separate route-load scoring, scoped indirect groups, hard eligibility filters, fixed/auto concurrency persistence, and a Goal checkpoint through the real TaskMesh handlers to distinct fake-chosen node models. Native workflow tests use admission barriers to prove six/four-reader waves and a lower executor cap of two while retaining exclusive writes and failure-stop behavior.
 
 Verification uses synthetic data, fake model/executor responses, fresh-process settings checks, the installed native workflow validator/sandbox with local fake children, and an actual Pi-Bolt load in a private offline config. Smoke blocks network requests and makes no model calls. Runtime regressions and actual host startup were also verified with the optional TypeSafe SDK physically absent. `typecheck` still excludes the legacy Gate runner. These checks establish local contracts; they do not prove live provider compatibility, model quality or paid end-to-end child execution.
