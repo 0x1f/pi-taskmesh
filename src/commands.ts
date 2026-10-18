@@ -473,8 +473,9 @@ export function registerJevCommands(
           return;
         }
         const enabled = arg === "on" ? true : arg === "off" ? false : !agentMode.enabled;
-        agentMode.setEnabled(enabled);
         try {
+          if (agents) agents.configure({ enabled });
+          else agentMode.setEnabled(enabled);
           jevClient.persistFeature("autoAgents", enabled);
           ctx.ui.notify(
             `Automatic agent orchestration ${enabled ? "enabled" : "disabled"} and saved globally.`,

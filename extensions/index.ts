@@ -11,6 +11,8 @@ import { AgentOrchestrator } from "../src/orchestrator.js";
 import { JevAgentHandler } from "../src/agent.js";
 import { ToolGuard } from "../src/tool-guard.js";
 import { JEV_TOOL_NAMES, isJevTool } from "../src/types.js";
+import { TaskMeshSettings } from "../src/taskmesh-config.js";
+import { registerTaskMeshCommands } from "../src/taskmesh-commands.js";
 
 function envBooleanOverride(name: string): boolean | null {
   const raw = process.env[name]?.trim().toLowerCase();
@@ -22,21 +24,22 @@ function envBooleanOverride(name: string): boolean | null {
 
 function featureDefault(
   jevClient: JevClient,
-  feature: "auto" | "autoModel" | "toolGuard" | "compact" | "autoAgents",
+  feature: "auto" | "autoModel" | "toolGuard" | "compact",
   envName: string
 ): boolean {
   return envBooleanOverride(envName) ?? jevClient.getFeatureDefault(feature);
 }
 
 export default function (pi: ExtensionAPI) {
+  const settings = new TaskMeshSettings();
   const jevClient = new JevClient();
   const router = new ToolRouter(pi, jevClient);
   const skillRouter = new SkillRouter(pi, jevClient);
 
-  pi.registerFlag("jev-agents", {
-    description: "Enable explicit and automatic orchestration of available agents",
+  pi.registerFlag("taskmesh", {
+    description: "Authorize automatic TaskMesh delegation (or set PI_TASKMESH=1)",
     type: "boolean",
-    default: featureDefault(jevClient, "autoAgents", "PI_JEV_AGENTS"),
+    default: !settings.error && (envBooleanOverride("PI_TASKMESH") ?? settings.value.enabled),
   });
 
   pi.registerFlag("jev-tool-guard", {
@@ -72,7 +75,7 @@ export default function (pi: ExtensionAPI) {
   );
   const autoModel = new AutoModelRouter(pi, Boolean(pi.getFlag("jev-auto-model")));
   const compactor = new JevCompactor(jevClient, Boolean(pi.getFlag("jev-compact")));
-  const agents = new AgentOrchestrator(pi, jevClient, Boolean(pi.getFlag("jev-agents")));
+  const agents = new AgentOrchestrator(pi, jevClient, !settings.error && Boolean(pi.getFlag("taskmesh")), settings);
 
   const toolGuard = new ToolGuard(pi, jevClient, Boolean(pi.getFlag("jev-tool-guard")));
   toolGuard.install();
@@ -81,18 +84,18 @@ export default function (pi: ExtensionAPI) {
   agentHandler.install();
 
   registerJevTools(pi, jevClient, router, skillRouter);
+  registerTaskMeshCommands(pi, agents);
   registerJevCommands(pi, jevClient, router, skillRouter, auto, autoModel, compactor, agents, toolGuard);
 
   pi.on("session_start", (_event, ctx) => {
     agents.restore(ctx);
     agents.installCompletionNotice();
     const toolsEnabled = jevClient.getToolsEnabled();
-    // No saved preference: leave Pi's initial tool selection untouched.
-    if (toolsEnabled !== undefined) {
-      pi.setActiveTools(toolsEnabled
-        ? [...new Set([...pi.getActiveTools(), ...JEV_TOOL_NAMES])]
-        : pi.getActiveTools().filter((name) => !isJevTool(name)));
-    }
+    // Register compatibility tools, but expose paid Jev calls only after explicit enablement.
+    pi.setActiveTools(toolsEnabled === true
+      ? [...new Set([...pi.getActiveTools(), ...JEV_TOOL_NAMES])]
+      : pi.getActiveTools().filter((name) => !isJevTool(name)));
+    ctx.ui.setStatus("taskmesh", agents.enabled ? "taskmesh: auto" : "taskmesh: explicit");
     if (!jevClient.isConfigured()) {
       ctx.ui.setStatus("jev", "jev: unconfigured");
       return;
@@ -121,19 +124,25 @@ export default function (pi: ExtensionAPI) {
     if (kind) ctx.ui.setStatus("jev", `jev: ${kind} → fallback next prompt`);
   });
 
+  pi.on("session_tree", (_event, ctx) => agents.restore(ctx));
   pi.on("session_shutdown", () => agents.dispose());
 
   pi.on("input", async (event, ctx) => {
-    if (!auto.enabled || !agents.enabled || event.source === "extension" || event.images?.length ||
+    if (!agents.enabled || event.source === "extension" || event.images?.length ||
         event.streamingBehavior || !ctx.isIdle() || event.text.trim().startsWith("/")) return { action: "continue" };
-    if (!await agents.assess(event.text, ctx)) return { action: "continue" };
+    const decision = await agents.assessDetailed(event.text, ctx);
+    if (decision.kind === "resume" || (decision.kind === "uncertain" && agents.hasActive())) {
+      ctx.ui.notify(await agents.resume(ctx), "info");
+      return { action: "handled" };
+    }
+    if (decision.kind !== "team") return { action: "continue" };
     const result = await agents.dispatch(event.text, ctx, true);
     if (!result.accepted && !result.uncertain) ctx.ui.notify(result.error ?? "Orchestration unavailable", "warning");
     return { action: result.accepted || result.uncertain || result.busy ? "handled" : "continue" };
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
-    if (!auto.enabled || typeof event.prompt !== "string") return;
+    if (typeof event.prompt !== "string") return;
 
     const modelResult = await autoModel.route(event.prompt, ctx, { hasImages: Boolean(event.images?.length) });
     if (modelResult.changed) {

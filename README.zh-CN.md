@@ -1,56 +1,102 @@
-# pi-jev-multi-provider
+# pi-taskmesh
 
 [English](README.md) | **简体中文**
 
-为 [Pi coding agent](https://github.com/earendil-works/pi) 提供 Jev System One 结构化判断、工具路由和技能推荐，支持 **TypeSafe Direct** 与 **Vercel AI Gateway** 两种传输。
+面向 Pi 的任务感知、多模型编排扩展，版本 **0.7.0**。项目从现有 pi-jev-multi-provider 演进：TaskMesh 负责拆解任务、选模型和协调执行；Jev 成为可选判断后端，原有功能继续兼容。
 
-本仓库由 `0x1f` 维护，当前包版本为 **0.6.0**。
-
-> “多 Provider”包含 Jev 判断传输选择，以及在 Pi 已认证聊天模型之间按子任务选模；本包不注册聊天 Provider。Jev 的 `auto` 传输偏好按凭据选择服务商，不会在请求失败后切换 Jev 服务。
+默认直接使用 Pi 中已经认证的聊天模型，**不需要 Jev Key**。本项目不注册聊天 provider，也不内置子代理执行器。
 
 ## 快速开始
 
-### 1. 安装
-
-需要已安装的 Pi、Git，以及满足 Pi 自身要求的 Node.js。此扩展的 `package.json` 声明 Node.js `>=20.3`；Pi 的版本要求可能更高。开发依赖以 Pi `^0.85.0` 为基线，不代表所有 Pi 版本都已验证兼容。
+仓库仍位于原来的 GitHub 地址。发布代码后可从该地址安装：
 
 ```bash
-pi install git:github.com/0x1f/pi-jev-multi-provider
+pi-bolt install git:github.com/0x1f/pi-jev-multi-provider
 ```
 
-使用 Pi-Bolt 时，将 CLI 命令中的 `pi` 换成 `pi-bolt`。安装后重启；在已运行的会话中可尝试 `/reload`。如需固定版本，可使用 `git:github.com/0x1f/pi-jev-multi-provider@<commit>`，将 `<commit>` 替换为实际提交 SHA。
+上游 Pi 用户将 `pi-bolt` 换成 `pi`。安装后重启或 `/reload`。本地验证可在源码目录执行 `pi-bolt -e ./extensions/index.ts`，无需全局安装；远程安装时应固定实际已发布的提交。
 
-若装过旧仓库版本，先运行 `pi list`，再按显示的源地址移除旧条目并安装本仓库；不会自动迁移旧安装地址。也请检查是否同时启用了其他 Jev 路由扩展，避免重复工具和自动请求。**不要批量移除无关扩展。**
-
-### 2. 在 Pi 中配置
+准备支持 `subagents:rpc:v1` 的兼容 `pi-subagents` 扩展、已认证的 Pi 模型，以及计划需要的代理定义：`scout`、`researcher`、`worker`、`reviewer`、`evidence-auditor`。先做一次明确授权的任务：
 
 ```text
-/jev setup
+/taskmesh run 重构请求解析器，验证行为，并独立审查最终 diff
+/taskmesh status
+/taskmesh explain
 ```
 
-选择 `Vercel AI Gateway`、`TypeSafe Direct` 或 `Auto-detect`。也可直接指定：
+自动委派默认关闭。要持续允许自动编排：
 
 ```text
-/jev setup vercel
-/jev setup typesafe
-/jev setup auto
+/taskmesh on
+请检查这个项目，实现请求的修改并验证、审查。
+/taskmesh resume
+/taskmesh off
 ```
 
-- `vercel` / `typesafe` 通过 UI 输入密钥；留空则保留现有凭据，取消则退出。
-- `auto` 只保存自动选择偏好，不会索取或生成密钥。
-- Provider 偏好写入全局 `jev.json`，密钥写入对应 secret 文件；代码设置 `0600` 权限，在不支持 POSIX 权限的文件系统上仅作尽力处理。
-- 密钥输入使用普通 `ctx.ui.input()`，不要假定输入会被掩码；避免在录屏或共享终端中输入密钥，也不要把它放进聊天消息或 slash 命令参数。
+`on` 将用户的自动委派选择保存为全局默认，跨项目、跨会话生效，授权对合适的后续任务进行拆解和子代理执行。模型判断 `team` 只说明适合拆分，不授予删除数据、发布或远程修改等权限。当前请求禁止委派时仍以当前请求为准。`off` 关闭后续自动委派；已有任务继续运行，显式 `run` 仍可使用。
 
-### 3. 检查状态与连通性
+## 命令与配置
 
-```text
-/jev status
-/jev test
+| 命令 | 行为 |
+| --- | --- |
+| `/taskmesh on`、`/taskmesh off` | 保存全局自动委派开关。 |
+| `/taskmesh run <任务>` | 主代理空闲时，明确授权并启动一个工作流。 |
+| `/taskmesh status` | 显示配置，存在任务时查询原生运行状态。 |
+| `/taskmesh explain` | 查看最近判断、任务图、模型、选型依据与启动状态。 |
+| `/taskmesh resume` | 重新连接已有任务、查询状态，不创建新任务图。 |
+| `/taskmesh help` | 显示用法。 |
+
+配置保存在 `~/.pi/agent/taskmesh.json`；设置 `PI_CODING_AGENT_DIR` 时使用该目录。默认值：
+
+```json
+{
+  "enabled": false,
+  "decisionBackend": "pi",
+  "maxConcurrency": 3
+}
 ```
 
-`status` 只检查配置及会话统计，**不是联网验证**。`test` 会向选中的 Jev 服务发送固定示例，可能产生费用。配置完成后，三个 Jev 工具可按需使用；五项自动/辅助功能默认均关闭。
+`maxConcurrency` 控制并发读任务数，范围 1–3；写任务独占共享工作目录。配置 Jev 后才能将 `decisionBackend` 改为 `jev`。手动编辑后重新加载扩展。命令以原子替换保存、保留无关字段，并报告保存错误；配置损坏时自动模式关闭，修复后才能开启。
 
-## Provider 与配置
+可以使用 `PI_TASKMESH=1` 或 `--taskmesh` 明确开启；`PI_TASKMESH=off` 会在重启后覆盖保存值。旧 `jev.json.features.autoAgents`、`PI_JEV_AGENTS` 和 `--jev-agents` 不再初始化新核心；交互式 `/jev auto-agents on|off` 仍作为兼容命令保存 TaskMesh 开关。自动编排不依赖 `/jev auto` 或 `/jev auto-model`。并发保存采用最后写入者胜出，原子替换防止文件写到一半，不保证多个进程同时更新不丢修改。
+
+## 判断、路由与执行边界
+
+1. 对符合条件的纯文本输入判断 `solo`、`team`、`resume` 或 `uncertain`。简单或不确定的输入通常交回主代理；已有任务运行时，不确定的继续请求只显示状态。常见中英文禁止委派表述直接绕过分类器。图片、扩展消息和流式追加输入沿用正常通路。
+2. Pi 根据本次请求、最多 10,000 字符的近期公开对话和最多 6,000 字符的近期 Goal 生成 **1–6 个任务**。不包含 thinking 和工具结果。验证依赖存在、图无环，以及每个写任务之后有依赖于它的审查任务。
+3. 每个任务从会话 scope 内、已认证且满足估算上下文要求的模型中选定明确的 `provider/model`。默认 Pi JSON 判断，可选 Jev choice 判断；每任务最多比较 16 个候选，依据需求、reasoning/上下文元数据、负载和已有执行回执。判断失败时使用元数据与负载评分回退。这些是选型估计，**不是编码能力基准测试**。条件适合时鼓励审查模型不同，但不强制模型多样性。
+4. 使用原生 `pi-subagents` 执行脚本。读任务可并行，worker 独占共享 cwd，后续节点收到依赖结果。只读提示词不等于操作系统权限或沙箱。子代理使用有界上下文，不复制完整历史。
+5. 已报告的认证、额度、限流等失败只冷却对应 `provider/model`，不屏蔽同一网关下的其他模型。成功/失败回执不等于质量评分，重新加载后计数与冷却重置。
+
+每次纯 Pi 推理最多尝试两个模型，每次限时 30 秒。规划、选型发生在子任务启动前。**子任务失败或启动结果未知时，不自动重放执行。** 没收到启动回执时保留请求 ID 并阻止重复派发，直到原生状态或完成事件给出确定结果。新会话记录使用 `taskmesh-orchestration`，仍可恢复旧 `jev-orchestration` 记录。
+
+原生执行器负责执行、完成通知和结果交付。`resume` 用于连接和查看，不重启失败/暂停的工作流，也不重放未确认的副作用；保留子任务的继续操作使用原生执行器的显式控制。没有兼容执行器时，能力检查约 10 秒失败，不启动子代理。
+
+自动模式即使最终决定保持 solo，也可能产生一次 Pi 判断费用。委派通常增加判断、规划和选型调用，再加子代理调用；有限重试和另外启用的 Jev 功能也可能增加费用。项目没有费用硬上限，也不进行实时能力跑分。
+
+## Jev 兼容命令
+
+Jev 工具与自动功能默认关闭，已有明确偏好会保留。需要时使用 `/jev setup` 配置、`/jev status` 检查、`/jev enable` 启用三个工具。`/jev test` 会发送真实样例并可能计费。密钥输入框不保证遮蔽，不要把 Key 放入聊天或命令参数。
+
+| 命令 | 用途 |
+| --- | --- |
+| `/jev setup [auto\|typesafe\|vercel]` | 保存 provider 选择并按需配置密钥。 |
+| `/jev provider [auto\|typesafe\|vercel]` | 查看或修改全局 provider。 |
+| `/jev enable`、`/jev disable` | 保存 Jev 工具启用状态，保留无关工具。 |
+| `/jev test [prompt]` | 真实连通性/判断测试；提供 prompt 时还调用 Pi 模型。 |
+| `/jev skills [query]` | 列出或搜索既有技能。 |
+| `/jev auto [on\|off]` | Jev 工具与技能路由。 |
+| `/jev auto-model [on\|off]` | 独立的主代理本地模型选择。 |
+| `/jev tool-guard [on\|off]`、`/jev compact [on\|off]` | 可选参数检查与历史片段选择。 |
+| `/jev auto-agents [on\|off]` | TaskMesh 自动委派兼容开关。 |
+| `/jev agents <任务>` | 显式派发兼容入口。 |
+| `/jev schedule explain`、`/jev schedule status` | 兼容调度诊断入口。 |
+
+旧功能命令省略 `on`/`off` 会切换开关；查看状态请用 `/jev status`。除 TaskMesh 独立偏好外，旧设置继续保存于 `jev.json`。`/jev disable` 只隐藏工具，自动功能需要分别关闭。`PI_JEV_AUTO`、`PI_JEV_AUTO_MODEL`、`PI_JEV_TOOL_GUARD`、`PI_JEV_COMPACT` 及对应 `--jev-*` 参数继续覆盖保存的启动值。布尔值接受 `1/true/yes/on` 和 `0/false/no/off`。
+
+TypeSafe SDK 已改为可选依赖、按需加载，默认 Pi 通路不依赖它。Jev 选定传输失败后不会自动改用其他传输。
+
+## 可选 Jev：Provider、配置与工具
 
 | 选择 | 默认模型 | 凭据环境变量 | 传输 |
 | --- | --- | --- | --- |
@@ -185,84 +231,6 @@ Provider 选择优先级：
 
 未配置或请求失败时，手动工具路由不激活任何候选；技能查询可返回关键词匹配结果，概率记为 `0` 并标记 fallback，并非有效的 Jev 概率。未配置时，自动路由整体跳过。
 
-## 命令与功能开关
-
-| 命令 | 作用 / 持久性 |
-| --- | --- |
-| `/jev`、`/jev status` | 查看 Provider、凭据来源、功能状态及成功请求统计。 |
-| `/jev setup [auto\|typesafe\|vercel]` | 交互配置，保存到全局。 |
-| `/jev provider [auto\|typesafe\|vercel]` | 查看或切换 Provider，修改保存到全局。 |
-| `/jev test` | 向 Jev 发送固定示例。 |
-| `/jev test <prompt>` | 先调用 Pi 当前聊天模型设计问题，再调用 Jev；两者都需要凭据，均可能计费。 |
-| `/jev skills [query]` | 无参数列出技能，有参数筛选技能。 |
-| `/jev enable`、`/jev disable` | 只改变三个 Jev 工具的激活状态，并保存到全局。 |
-| `/jev auto [on\|off]` | 每次 prompt 前自动路由工具和推荐技能。 |
-| `/jev auto-model [on\|off]` | 按本地任务规则选择 Pi 聊天模型，不调用 Jev 判断模型。 |
-| `/jev tool-guard [on\|off]` | 用 Jev 判断工具参数是否疑似虚构，并辅助分类工具错误。 |
-| `/jev compact [on\|off]` | 在 Pi 压缩上下文时提供 Jev 筛选的历史摘录。 |
-| `/jev auto-agents [on\|off]` | 开关自动 agent 编排。 |
-| `/jev agents <task>` | 显式规划并提交任务，需要兼容的 `pi-subagents`。 |
-| `/jev schedule explain` | 查看最后的任务依赖、所选模型、原因和启动状态。 |
-| `/jev schedule status` | 向原生执行器查询该次运行状态。 |
-| `/jev help` | 查看内置帮助。 |
-
-五个功能开关无参数时是**切换**，不是查询；修改立即生效，并保存为之后所有项目/会话的全局默认值。保存失败会提示，当前会话的修改仍然有效。
-
-`/jev provider` 和 `/jev enable` / `/jev disable` 现在也会立即持久化。工具激活状态保存在 `jev.json` 的 `toolsEnabled` 中，启动或重载时恢复，没有凭据时也生效；不改变其他工具或自动功能开关。未保存 `toolsEnabled` 时保留 Pi 原始工具选择。设置是全局的，不是按项目隔离；重启后现有环境变量覆盖仍优先。
-
-| JSON 字段 | 环境变量 | 启动参数 |
-| --- | --- | --- |
-| `features.auto` | `PI_JEV_AUTO` | `--jev-auto` |
-| `features.autoModel` | `PI_JEV_AUTO_MODEL` | `--jev-auto-model` |
-| `features.toolGuard` | `PI_JEV_TOOL_GUARD` | `--jev-tool-guard` |
-| `features.compact` | `PI_JEV_COMPACT` | `--jev-compact` |
-| `features.autoAgents` | `PI_JEV_AGENTS` | `--jev-agents` |
-
-未配置的开关默认 `false`。环境变量接受 `1/true/yes/on` 与 `0/false/no/off`，覆盖保存的启动默认值；Pi 的对应 CLI flag 可进一步覆盖启动值。
-
-**自动主模型选择和自动编排均要求 `/jev auto on`。** 自动编排还需 `/jev auto-agents on` 和已配置的 Jev 凭据。显式 `/jev agents <task>` 不要求上述开关或 Jev 凭据，但需要已认证的 Pi 规划模型和执行器。子任务选模不依赖 `/jev auto-model`；后者只控制普通主 Agent。
-
-自动路由分别请求工具和技能判断，两类均有候选时会发起 **2 次 Jev 调用**，不是固定每次 prompt 1 次；tool guard、编排和压缩还可能增加请求。
-
-已有权限系统或专用压缩器时，可从以下组合开始：
-
-```text
-/jev enable
-/jev auto on
-/jev auto-model off
-/jev tool-guard off
-/jev compact off
-/jev auto-agents off
-```
-
-`/jev disable` **不是总停用开关**，不会关闭事件钩子。要停止这些自动功能，应将上面五个开关都设为 `off`；完全卸载则使用 `pi remove` 并重启 Pi。
-
-## 可选集成与限制
-
-### Agent 编排
-
-通过 `subagents:rpc:v1:request` 事件协议与兼容的 `pi-subagents` 集成；这个扩展**不包含子代理执行器**。根据工作流需提供 `scout`、`worker`、`reviewer`、`researcher`、`evidence-auditor` 等 agent 定义。无兼容监听器时，提交约 10 秒后超时。
-
-0.6.0 将英文关键词触发和四种固定工作流改为以下流程：
-
-1. 在输入阶段由 Jev 做语义判断，支持中文请求。简单请求继续交给主 Agent；成功提交的编排请求会被消费，避免主 Agent 同时重复执行。带图片、扩展内部消息和流式 steer/follow-up 输入继续走原流程。
-2. 使用一个已认证的 Pi 模型生成并校验 **1–6 个子任务**及依赖关系。规划上下文包含当前分支最后 40 条记录中的公开用户/助手消息（最多 10,000 字符），以及最近三个目标记录（最多 6,000 字符）；不转发工具结果和思考块。这是有限上下文摘录，不是完整历史。
-3. 为每个子任务明确指定 `provider/model`，候选仅来自 Pi 已认证模型，并遵守当前会话的 scoped models 与估算的上下文要求。Jev 结合任务需要、声明的推理/上下文元数据、执行器报告的运行结果及负载，在每个任务最多 16 个候选中选择；判断缺失或无效时退回元数据/负载排序。这是路由估计，**不是实测编码能力分数，也不保证最优模型**。
-4. 原生异步脚本把依赖结果传给后续任务，最多并行三个只读 Agent，每个 worker 独占共享工作目录执行。所有写任务之后必须有独立复核。只读提示不能替代操作系统权限或沙箱。
-
-配置好 Jev 并安装兼容执行器后，可启用自动调度：
-
-```text
-/jev auto on
-/jev auto-agents on
-/jev schedule explain
-/jev schedule status
-```
-
-RPC 使用当前的 `script`、`cwd` 字段，并核对请求关联 ID。启动回执缺失时保留原请求 ID，将状态记为**结果未知**；在原生完成通知或权威状态核实前，阻止重复调度。子任务失败后停止依赖任务，不自动重放。结果投递和完成唤醒由原生 `pi-subagents` 负责。最后的计划和运行状态可从当前会话分支恢复；运行结果计数和冷却状态在重载后清空。执行器报告的认证/额度/限流错误会暂时从后续计划中排除相应模型或 Provider，不会重试已失败任务，也不会切换 Jev 的传输服务。
-
-自动调度在子代理执行前增加一次 Jev 准入判断、一次规划模型调用，以及最多一次 Jev 选模请求；普通工具/技能路由及子代理调用还可能增加费用。本版不提供费用上限或实网能力基准。`agent: "jev"` / `"typesafe-jev"` 仍处理结构化判断，不是通用编码 Agent。
-
 ### Tool guard 与压缩
 
 - Tool guard 仅看工具名与参数，并不验证文件实际存在；疑似虚构概率达到 `0.85` 时阻止调用。评估异常时**放行**，所以它不能替代沙箱、权限控制或确定性校验。
@@ -285,32 +253,25 @@ node ./bin/jev-gate.js --criteria "The supplied text explains installation and c
 
 CLI 创建独立的 `JevClient`，读取环境变量和全局配置，包括 `/jev provider` 成功保存的选择，但不继承另一 Pi 进程的内存覆盖值。
 
-## 代码结构
+## 代码与验证
 
 | 路径 | 职责 |
 | --- | --- |
-| [`extensions/index.ts`](extensions/index.ts) | 注册工具、命令、启动参数和生命周期钩子。 |
-| [`src/jev.ts`](src/jev.ts) | Provider/凭据解析、全局配置、两种传输和响应归一化。 |
-| [`src/router.ts`](src/router.ts)、[`src/skills.ts`](src/skills.ts)、[`src/auto.ts`](src/auto.ts) | 候选筛选、增量激活、技能推荐和自动调度。 |
-| [`src/tools.ts`](src/tools.ts)、[`src/commands.ts`](src/commands.ts) | 工具参数与 `/jev` 命令。 |
-| [`src/designer.ts`](src/designer.ts) | 使用当前 Pi 模型设计结构化评估问题。 |
-| [`src/model-router.ts`](src/model-router.ts) | 本地模型选择及部分 HTTP 错误后的短期避让。 |
-| [`src/task-planner.ts`](src/task-planner.ts) | 有限会话/目标上下文、任务规划及依赖校验。 |
-| [`src/capability-router.ts`](src/capability-router.ts) | 按任务选择已认证/scoped 模型，参考负载和已报告的运行结果。 |
-| [`src/agent.ts`](src/agent.ts)、[`src/orchestrator.ts`](src/orchestrator.ts) | Jev agent RPC、异步执行及启动/结果归属。 |
-| [`src/tool-guard.ts`](src/tool-guard.ts)、[`src/compact.ts`](src/compact.ts) | 可选参数判断及有限历史压缩。 |
-| [`src/gate.ts`](src/gate.ts)、[`bin/jev-gate.js`](bin/jev-gate.js) | 评估型 CLI gate 与启动器。 |
-
-## 开发与验证范围
+| [extensions/index.ts](extensions/index.ts) | 集成、事件钩子与兼容功能。 |
+| [src/taskmesh-config.ts](src/taskmesh-config.ts)、[src/taskmesh-commands.ts](src/taskmesh-commands.ts) | 独立配置与命令。 |
+| [src/decision-backend.ts](src/decision-backend.ts) | Pi/可选 Jev 判断、JSON 验证与有限纯推理重试。 |
+| [src/task-planner.ts](src/task-planner.ts)、[src/capability-router.ts](src/capability-router.ts) | 上下文、任务图验证与模型分配。 |
+| [src/orchestrator.ts](src/orchestrator.ts) | 原生脚本、RPC 关联、状态恢复与防重派。 |
+| [src/jev.ts](src/jev.ts) | 旧凭据解析与可选 Jev 传输。 |
 
 ```bash
-git clone https://github.com/0x1f/pi-jev-multi-provider.git
-cd pi-jev-multi-provider
-npm install
+npm ci --ignore-scripts
 npm run typecheck
 npm test
+npm run test:native  # 需要已安装的兼容 pi-subagents
+npm run smoke        # 需要 pi-bolt，仅做私有配置离线加载
 ```
 
-包另有 `npm run smoke`，它会启动 Pi 并发送 prompt，可能使用本机模型凭据、触发网络请求和费用；不是离线单元测试。`typecheck` 当前不覆盖 `bin/jev-gate-runner.ts`。`npm test` 使用临时配置目录和全新子进程运行离线持久化回归，并用本地规划/Jev/执行器替身验证任务图、模型范围、依赖输出、写任务互斥、启动未知状态、完成事件归属及诊断命令，不使用真实凭据或子代理。本版未附依赖锁文件。
+锁文件固定开发依赖，含 Pi SDK 0.85.0；针对该 SDK 类型检查通过，不代表兼容所有 Pi 版本。扩展声明 Node >=20.3，宿主可能需要更高版本。原生测试可通过首个参数或 `PI_SUBAGENTS_DIR` 指定包目录。
 
-类型检查和离线回归验证的是本地契约，不代表 TypeSafe/Vercel 实网兼容性、模型质量或付费子代理端到端验收。这些检查不包含付费推理或 `npm run smoke`。部署前请在自己的受控环境中验证所选 Pi 版本和 Provider。
+验证使用合成数据、假的模型/执行器回执、跨进程配置检查、已安装原生工作流验证器/沙箱加本地假子任务，以及私有离线配置中的真实 Pi-Bolt 加载。smoke 阻止网络调用，不调用模型。还在实际移除可选 TypeSafe SDK 后验证了运行时回归与真实宿主加载。`typecheck` 仍不包含旧 Gate runner。这些检查验证本地合同，不能证明真实 provider 兼容性、模型质量或付费子代理端到端效果。

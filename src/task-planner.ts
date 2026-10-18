@@ -1,6 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Model } from "@earendil-works/pi-ai";
-import { extractJson } from "./designer.js";
+import { inferJson } from "./decision-backend.js";
 import type { ModelProfile } from "./model-router.js";
 
 export interface PlannedTask {
@@ -64,14 +64,15 @@ export function validatePlan(raw: unknown): TaskPlan {
 }
 
 /** At most three readers together; writers always have exclusive access to the cwd. */
-export function taskBatches(plan: TaskPlan): PlannedTask[][] {
+export function taskBatches(plan: TaskPlan, maxReaders = 3): PlannedTask[][] {
+  if (!Number.isSafeInteger(maxReaders) || maxReaders < 1 || maxReaders > 3) throw new Error("Reader concurrency must be 1–3");
   const done = new Set<string>();
   const batches: PlannedTask[][] = [];
   while (done.size < plan.tasks.length) {
     const ready = plan.tasks.filter(t => !done.has(t.id) && t.dependsOn.every(d => done.has(d)));
     if (!ready.length) throw new Error("Cyclic task dependencies");
     const readers = ready.filter(t => !t.writes);
-    const batch = readers.length ? readers.slice(0, 3) : [ready[0]];
+    const batch = readers.length ? readers.slice(0, maxReaders) : [ready[0]];
     batches.push(batch);
     for (const t of batch) done.add(t.id);
   }
@@ -91,11 +92,11 @@ const PLAN_PROMPT = [
   "Use the user's language. Do not execute the work yourself. No code fences.",
 ].join("\n");
 
-export async function planTasks(task: string, context: string, ctx: ExtensionContext, model: Model<any>, signal: AbortSignal): Promise<TaskPlan> {
-  const response = await ctx.modelRegistry.complete(model, {
-    systemPrompt: PLAN_PROMPT,
-    messages: [{ role: "user", content: [{ type: "text", text: JSON.stringify({ task, cwd: ctx.cwd, recentContext: context }) }], timestamp: Date.now() }],
-  }, { signal, maxTokens: Math.min(4096, model.maxTokens), cacheRetention: "none" });
-  if (response.stopReason !== "stop") throw new Error(response.errorMessage || "Planner did not finish a valid response");
-  return validatePlan(extractJson(response.content.filter(c => c.type === "text").map(c => c.text).join("\n")));
+export async function planTasks(
+  task: string, context: string, ctx: ExtensionContext, models: Model<any>[], signal: AbortSignal,
+  onFailure?: (model: string, error: string) => void
+): Promise<{ plan: TaskPlan; model: Model<any> }> {
+  const result = await inferJson(ctx, models, PLAN_PROMPT, { task, cwd: ctx.cwd, recentContext: context },
+    validatePlan, signal, { maxTokens: 4096, onFailure });
+  return { plan: result.value, model: result.model };
 }

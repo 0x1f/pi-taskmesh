@@ -8,6 +8,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import extension from "../extensions/index.js";
 import { JevClient } from "../src/jev.js";
 import { JEV_TOOL_NAMES } from "../src/types.js";
+import { TaskMeshSettings } from "../src/taskmesh-config.js";
 
 // Every child uses a private config directory, no real credentials or network.
 globalThis.fetch = async () => { throw new Error("Unexpected network request"); };
@@ -18,33 +19,35 @@ if (!mode) {
   const root = mkdtempSync(join(tmpdir(), "jev-persistence-"));
   const env: NodeJS.ProcessEnv = { ...process.env, PI_CODING_AGENT_DIR: root };
   for (const key of Object.keys(env)) {
-    if (/^(JEV_|PI_JEV_|TYPESAFE_|AI_GATEWAY_API_KEY$)/.test(key)) delete env[key];
+    if (/^(JEV_|PI_JEV_|PI_TASKMESH$|TYPESAFE_|AI_GATEWAY_API_KEY$)/.test(key)) delete env[key];
   }
   try {
     writeFileSync(join(root, "jev.json"), JSON.stringify({ vercel: { model: "custom-model" }, keep: 42 }));
-    for (const phase of ["save", "overrides", "restore", "restore-off", "enable", "restore-enabled", "failure"]) {
+    for (const phase of ["save", "overrides", "restore", "restore-off", "enable", "restore-enabled", "taskmesh-on", "taskmesh-on-restored", "taskmesh-off-restored", "failure"]) {
       const child = spawnSync(process.execPath, [fileURLToPath(import.meta.url), phase], { env, encoding: "utf8" });
       assert.equal(child.status, 0, `${phase}: ${child.stdout}\n${child.stderr}`);
     }
-    console.log("PASS: provider, tool activation and five feature switches survive fresh processes; save failures are reported.");
+    console.log("PASS: independent TaskMesh opt-in, backend/concurrency settings, legacy provider/tool activation and feature switches survive fresh processes; save failures are reported.");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 } else {
   if (mode === "overrides") {
     process.env.JEV_PROVIDER = "typesafe";
+    process.env.PI_TASKMESH = "off";
     for (const name of ["PI_JEV_AUTO", "PI_JEV_AUTO_MODEL", "PI_JEV_TOOL_GUARD", "PI_JEV_COMPACT", "PI_JEV_AGENTS"]) process.env[name] = "off";
   }
   const flags = new Map<string, unknown>();
   const handlers = new Map<string, Function[]>();
   let command: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
+  let taskmesh: typeof command;
   let active: string[] = ["read", "unrelated_tool", ...(mode === "save" ? [] : JEV_TOOL_NAMES)];
   const notices: string[] = [];
   const pi = {
     registerFlag(name: string, options: { default: unknown }) { flags.set(name, options.default); },
     getFlag: (name: string) => flags.get(name),
     registerTool() {},
-    registerCommand(_name: string, options: { handler: typeof command }) { command = options.handler; },
+    registerCommand(name: string, options: { handler: typeof command }) { if (name === "taskmesh") taskmesh = options.handler; else command = options.handler; },
     on(name: string, handler: Function) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
     events: { on() { return () => {}; } },
     getActiveTools: () => active,
@@ -67,6 +70,8 @@ if (!mode) {
     assert.equal(config().keep, 42);
     assert.equal(config().vercel.model, "custom-model");
   } else if (mode === "overrides") {
+    assert.equal(flags.get("taskmesh"), false);
+    assert.equal(new TaskMeshSettings().value.enabled, true);
     assert.equal(client.getProviderPreference(), "typesafe");
     await run("status");
     for (const label of labels) assert.ok(notices.at(-1)!.includes(`${label}: off`));
@@ -90,6 +95,22 @@ if (!mode) {
     for (const handler of handlers.get("session_start") ?? []) await handler({ reason: "reload" }, ctx);
     assert.deepEqual(active, ["read", "unrelated_tool", ...JEV_TOOL_NAMES]);
     assert.equal(config().keep, 42);
+  } else if (mode === "taskmesh-on") {
+    const settings = new TaskMeshSettings();
+    settings.save({ decisionBackend: "jev", maxConcurrency: 2 });
+    await taskmesh!("on", ctx);
+    assert.equal(new TaskMeshSettings().value.enabled, true);
+    assert.match(notices.at(-1)!, /authorizes task decomposition/);
+  } else if (mode === "taskmesh-on-restored") {
+    await taskmesh!("status", ctx);
+    assert.match(notices.at(-1)!, /on \(user opt-in\)/);
+    assert.match(notices.at(-1)!, /Decision backend: jev/);
+    assert.match(notices.at(-1)!, /Readers: 2/);
+    await taskmesh!("off", ctx);
+  } else if (mode === "taskmesh-off-restored") {
+    await taskmesh!("status", ctx);
+    assert.match(notices.at(-1)!, /off \(explicit run only\)/);
+    assert.equal(new TaskMeshSettings().value.enabled, false);
   } else if (mode === "failure") {
     const blocked = join(process.env.PI_CODING_AGENT_DIR!, "blocked");
     writeFileSync(blocked, "not a directory");

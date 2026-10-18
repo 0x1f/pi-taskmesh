@@ -1,56 +1,102 @@
-# pi-jev-multi-provider
+# pi-taskmesh
 
 **English** | [简体中文](README.zh-CN.md)
 
-Jev System One structured judgments, tool routing, and skill recommendations for the [Pi coding agent](https://github.com/earendil-works/pi), with **TypeSafe Direct** and **Vercel AI Gateway** transports.
+Task-aware, multi-model orchestration for Pi. Version **0.7.0** evolves the existing pi-jev-multi-provider extension: TaskMesh handles task decomposition, routing and execution coordination; Jev is an optional judgment backend and compatibility feature set.
 
-Maintained by `0x1f`. Current package version: **0.6.0**.
-
-> “Multi-provider” covers Jev transport selection and optional task-level selection across chat models already authenticated in Pi. This package does not register chat providers. The Jev `auto` transport preference selects by credentials; it does not switch Jev services after a request fails.
+The default path uses chat models already authenticated in Pi. **No Jev key is required.** This package does not register chat providers or include a subagent executor.
 
 ## Quick start
 
-### 1. Install
-
-You need Pi, Git, and a Node.js version supported by your Pi installation. This extension declares Node.js `>=20.3`; Pi itself may require a newer version. Development dependencies target Pi `^0.85.0`, which does not imply compatibility with every Pi release.
+Install from this repository's current location; its GitHub name has not changed:
 
 ```bash
-pi install git:github.com/0x1f/pi-jev-multi-provider
+pi-bolt install git:github.com/0x1f/pi-jev-multi-provider
 ```
 
-For Pi-Bolt, use `pi-bolt` in place of `pi` in CLI commands. Restart after installation, or try `/reload` in an existing session. To pin a revision, use `git:github.com/0x1f/pi-jev-multi-provider@<commit>`, replacing `<commit>` with an actual commit SHA.
+For upstream Pi, use `pi` instead of `pi-bolt`. Restart or `/reload`. This checkout is the implementation source; use `pi-bolt -e ./extensions/index.ts` to load it without installing it globally. Only install a revision after it has been published to the repository.
 
-If you installed an older repository version, run `pi list`, remove its exact source entry, and install this repository. Old installation URLs are not migrated automatically. Check for other enabled Jev routers to avoid duplicate tools and automatic requests. **Do not remove unrelated extensions.**
-
-### 2. Configure inside Pi
+Provide a compatible `pi-subagents` extension with the `subagents:rpc:v1` protocol, authenticated Pi models, and the agents used by your plan (`scout`, `researcher`, `worker`, `reviewer`, `evidence-auditor`). Then:
 
 ```text
-/jev setup
+/taskmesh run Refactor the request parser, verify behavior, and independently review the diff
+/taskmesh status
+/taskmesh explain
 ```
 
-Choose `Vercel AI Gateway`, `TypeSafe Direct`, or `Auto-detect`. You can also specify the provider directly:
+Automatic delegation is off by default. To authorize it for future eligible prompts:
 
 ```text
-/jev setup vercel
-/jev setup typesafe
-/jev setup auto
+/taskmesh on
+Please inspect this project and implement the requested change with verification and review.
+/taskmesh resume
+/taskmesh off
 ```
 
-- `vercel` / `typesafe` prompt for a key. Leave it blank to keep existing credentials, or cancel to exit.
-- `auto` only saves the provider preference; it does not request or generate a key.
-- The provider preference is saved in the global `jev.json`; keys go into the corresponding secret files. The code sets `0600` permissions, with best-effort handling on filesystems without POSIX modes.
-- Key entry uses ordinary `ctx.ui.input()`. Do not assume the input is masked; avoid entering keys while recording or sharing your terminal, and do not put keys in chat messages or slash-command arguments.
+`on` persists the user's opt-in globally across projects and sessions. It authorizes decomposition and child execution for eligible tasks. A model's `team` classification is only a suitability decision; it does not create permission for destructive actions or remote changes. Requests forbidding delegation take priority. `off` stops future automatic delegation; existing work continues and explicit `run` remains available.
 
-### 3. Check configuration and connectivity
+## Commands and configuration
 
-```text
-/jev status
-/jev test
+| Command | Behavior |
+| --- | --- |
+| `/taskmesh on`, `/taskmesh off` | Save the global automatic-delegation preference. |
+| `/taskmesh run <task>` | Explicitly authorize and start one workflow while the main agent is idle. |
+| `/taskmesh status` | Show configuration and query the current native run, if any. |
+| `/taskmesh explain` | Show the last decision, task graph, models, selection basis and launch state. |
+| `/taskmesh resume` | Reconnect to the existing schedule and inspect status without launching another graph. |
+| `/taskmesh help` | Show command usage. |
+
+Global settings live in `~/.pi/agent/taskmesh.json`, or `$PI_CODING_AGENT_DIR/taskmesh.json`. Defaults:
+
+```json
+{
+  "enabled": false,
+  "decisionBackend": "pi",
+  "maxConcurrency": 3
+}
 ```
 
-`status` checks configuration and session statistics; it is **not a network test**. `test` sends a fixed example to the selected Jev service and may incur charges. Once configured, the three Jev tools can be used on demand. All five automatic/auxiliary features are off by default.
+`maxConcurrency` is the number of concurrent read tasks, from 1 to 3. Writers run exclusively. Set `decisionBackend` to `jev` only after configuring Jev. Reload after editing the file. Command saves are atomic, preserve unrelated fields, and report errors; invalid settings disable automatic delegation until repaired.
 
-## Providers and configuration
+Use `PI_TASKMESH=1` or `--taskmesh` for a startup opt-in; `PI_TASKMESH=off` overrides a saved default after restarting. Old `jev.json.features.autoAgents`, `PI_JEV_AGENTS` and `--jev-agents` no longer initialize the new core. The interactive `/jev auto-agents on|off` compatibility command still saves the TaskMesh preference. Automatic orchestration is independent of `/jev auto` and `/jev auto-model`. Concurrent config saves use last-writer-wins; atomic replacement prevents partial files, not simultaneous-update loss.
+
+## Decisions, model routing and execution
+
+1. Eligible text input is classified as `solo`, `team`, `resume` or `uncertain`. Simple/uncertain input normally continues to the main agent; uncertainty during an active run shows its status. Current delegation refusals bypass the classifier for common Chinese/English phrasing. Images, extension messages and streaming follow-ups keep their normal path.
+2. Pi plans **1–6 validated tasks** using the current request, up to 10,000 characters of recent public conversation and up to 6,000 characters of recent goals. Thinking and tool-result blocks are excluded. Dependencies must exist, the graph must be acyclic, and every writer needs a later review depending on it.
+3. Each task gets an explicit `provider/model` from authenticated models inside the session's scope, checked against its estimated context requirement. A Pi JSON judgment (or optional Jev choice judgment) compares up to 16 candidates per task using requirements, reasoning/context metadata, load and reported outcomes. If routing judgment fails, metadata/load scoring selects an eligible model. These are estimates, **not measured coding benchmarks**. Review model diversity is encouraged when suitable; a distinct model is not guaranteed.
+4. The generated script runs through native `pi-subagents`. Readers can run in parallel, workers run exclusively in the shared cwd, and dependency outputs reach later tasks. Read-only task instructions are advisory; enforce filesystem permissions or sandboxing separately when needed. Children receive bounded context rather than a full session fork.
+5. A reported failure cools down that exact `provider/model`. Other models behind the same gateway remain eligible. Runtime completion/failure counts are not quality scores and reset on session reload.
+
+Each pure Pi inference tries at most two models with a 30-second limit per attempt. Planning and model selection happen before child launch. There is **no automatic replay of child work or a launch with an unknown outcome**. A missing spawn reply is retained with its request ID and blocks another workflow until authoritative native status or completion resolves it. Legacy `jev-orchestration` session entries still restore; new entries use `taskmesh-orchestration`.
+
+Native `pi-subagents` owns child execution, completion notification and result delivery. `resume` inspects/reconnects; it does not restart failed/paused workflows or relaunch unfinished side effects. Retained-child continuation requires the native executor's explicit controls. Without a compatible executor, the capability check fails after about 10 seconds and no child is launched.
+
+Automatic mode can make a paid Pi judgment even for requests ultimately kept solo. A delegated request normally adds assessment, planning and model-selection calls, followed by child calls; bounded model retries and enabled Jev features can add cost. There is no spending cap or live capability benchmark.
+
+## Jev compatibility commands
+
+Jev tools and automatic features are inactive by default. Existing explicit preferences are preserved. To use them, configure a provider with `/jev setup`, inspect `/jev status`, and enable the three tools with `/jev enable`. `/jev test` sends a real example and may incur charges. Keys entered in `ctx.ui.input()` may be visible; never put keys in chat or slash-command arguments.
+
+| Command | Purpose |
+| --- | --- |
+| `/jev setup [auto\|typesafe\|vercel]` | Save provider selection and optionally credentials. |
+| `/jev provider [auto\|typesafe\|vercel]` | Inspect/change the global provider preference. |
+| `/jev enable`, `/jev disable` | Save Jev tool activation; unrelated tools are preserved. |
+| `/jev test [prompt]` | Paid connectivity/evaluation test; a prompt also uses a Pi model. |
+| `/jev skills [query]` | List or find existing skills. |
+| `/jev auto [on\|off]` | Jev tool/skill routing. |
+| `/jev auto-model [on\|off]` | Local main-model selection, independent of orchestration. |
+| `/jev tool-guard [on\|off]`, `/jev compact [on\|off]` | Optional argument checks/history excerpts. |
+| `/jev auto-agents [on\|off]` | Compatibility switch for TaskMesh automatic delegation. |
+| `/jev agents <task>` | Compatibility explicit workflow command. |
+| `/jev schedule explain`, `/jev schedule status` | Compatibility schedule diagnostics. |
+
+Legacy feature commands without `on`/`off` toggle; use `/jev status` to inspect them. Settings remain in `jev.json`, except TaskMesh's independent preference. `/jev disable` only hides Jev tools; turn off automatic features separately. Old environment variables `PI_JEV_AUTO`, `PI_JEV_AUTO_MODEL`, `PI_JEV_TOOL_GUARD`, `PI_JEV_COMPACT` and matching `--jev-*` flags still override saved startup defaults. Boolean values accept `1/true/yes/on` and `0/false/no/off`.
+
+The TypeSafe SDK is an optional, lazily imported dependency. The default Pi backend works without it. Jev transport choice does not automatically change after a failed request.
+
+## Optional Jev: providers, configuration and tools
 
 | Selection | Default model | Credential environment variable | Transport |
 | --- | --- | --- | --- |
@@ -185,84 +231,6 @@ Local keyword shortlisting happens before Jev evaluation: at most **10 tools** a
 
 When unconfigured or offline, manual tool routing does not activate candidates. Skill lookup may return keyword matches marked as fallback with probability `0`; these are not valid Jev probabilities. Automatic routing is skipped entirely when unconfigured.
 
-## Commands and feature switches
-
-| Command | Purpose / persistence |
-| --- | --- |
-| `/jev`, `/jev status` | Show provider, credential source, feature status, and successful-request statistics. |
-| `/jev setup [auto\|typesafe\|vercel]` | Interactive setup saved globally. |
-| `/jev provider [auto\|typesafe\|vercel]` | Inspect or switch the provider; changes are saved globally. |
-| `/jev test` | Send a fixed example to Jev. |
-| `/jev test <prompt>` | Ask Pi's current chat model to design questions, then call Jev. Both need credentials and may incur charges. |
-| `/jev skills [query]` | List skills without a query, or find matching skills with one. |
-| `/jev enable`, `/jev disable` | Change only the three Jev tools' activation state and save globally. |
-| `/jev auto [on\|off]` | Route tools and recommend skills before each prompt. |
-| `/jev auto-model [on\|off]` | Select a Pi chat model with local rules, not a Jev model-selection judgment. |
-| `/jev tool-guard [on\|off]` | Use Jev to detect apparently fabricated tool arguments and classify tool errors. |
-| `/jev compact [on\|off]` | Supply Jev-selected history excerpts during Pi context compaction. |
-| `/jev auto-agents [on\|off]` | Toggle automatic agent orchestration. |
-| `/jev agents <task>` | Plan and dispatch a workflow through compatible `pi-subagents`. |
-| `/jev schedule explain` | Show the last task graph, selected models, reasons, and launch state. |
-| `/jev schedule status` | Query the native executor for that run. |
-| `/jev help` | Show built-in command help. |
-
-Calling one of the five feature-switch commands without `on` or `off` **toggles it**; it does not query its state. Changes apply immediately and are saved as global defaults for future sessions/projects. If saving fails, a warning is shown and the session change still applies.
-
-`/jev provider` and `/jev enable` / `/jev disable` now persist immediately too. Tool activation is stored as `toolsEnabled` in `jev.json` and restored on startup/reload, even without credentials; unrelated tools and automatic feature switches are unchanged. Without a saved `toolsEnabled`, Pi's initial tool selection is preserved. Preferences are global, not per-project. Existing environment overrides still take precedence after restarting.
-
-| JSON field | Environment variable | Startup flag |
-| --- | --- | --- |
-| `features.auto` | `PI_JEV_AUTO` | `--jev-auto` |
-| `features.autoModel` | `PI_JEV_AUTO_MODEL` | `--jev-auto-model` |
-| `features.toolGuard` | `PI_JEV_TOOL_GUARD` | `--jev-tool-guard` |
-| `features.compact` | `PI_JEV_COMPACT` | `--jev-compact` |
-| `features.autoAgents` | `PI_JEV_AGENTS` | `--jev-agents` |
-
-Unset switches default to `false`. Environment variables accept `1/true/yes/on` and `0/false/no/off`, overriding saved startup defaults. Pi's corresponding CLI flags can further override startup values.
-
-**Automatic main-model selection and automatic orchestration both require `/jev auto on`.** Automatic orchestration additionally requires `/jev auto-agents on` and configured Jev credentials. Explicit `/jev agents <task>` does not require these switches or Jev credentials, but does require an authenticated Pi planning model and an executor. Child model selection works independently of the `/jev auto-model` switch, which only controls the normal main agent.
-
-Automatic routing evaluates tools and skills separately. When both have candidates, this makes **2 Jev calls**, not a fixed one call per prompt. Tool guard, orchestration, and compaction may add further requests.
-
-If you already have a permission system or dedicated compactor, start with:
-
-```text
-/jev enable
-/jev auto on
-/jev auto-model off
-/jev tool-guard off
-/jev compact off
-/jev auto-agents off
-```
-
-`/jev disable` **is not a master off switch** and does not disable event hooks. Set all five feature switches above to `off` to stop those automatic features. To unload the extension entirely, use `pi remove` and restart Pi.
-
-## Optional integrations and limitations
-
-### Agent orchestration
-
-Integration uses the `subagents:rpc:v1:request` event protocol with a compatible `pi-subagents` extension. This package **does not include a subagent executor**. Depending on the workflow, provide agent definitions such as `scout`, `worker`, `reviewer`, `researcher`, and `evidence-auditor`. Without a compatible listener, dispatch times out after about 10 seconds.
-
-Version 0.6.0 replaces the English keyword trigger and four fixed workflows with:
-
-1. A semantic Jev judgment at the input boundary, including Chinese requests. Simple requests continue to the normal main agent. A successfully dispatched request is consumed so the main agent does not also execute it. Images, extension messages, and streaming steering/follow-up inputs use the normal path.
-2. One authenticated Pi model plans a validated graph of **1–6 tasks**. Planning includes up to 10,000 characters from recent public user/assistant messages (last 40 branch entries) and up to 6,000 characters from the latest three goal records. Tool results and thinking blocks are excluded. This is bounded context, not the full history.
-3. Each task receives an explicit `provider/model` chosen from authenticated models within the session's scoped models and estimated context requirement. Jev judges up to 16 candidates per task using task needs, declared reasoning/context metadata, runtime outcomes when reported, and executor load. Missing or invalid judgments use a metadata/load fallback. These are routing estimates, **not measured coding scores or a guarantee of optimal selection**.
-4. A native asynchronous script passes dependency outputs to later tasks, runs at most three read-only agents together, and runs each worker exclusively in the shared working directory. Implementation plans require an independent review after every writer. Read-only instructions do not replace OS permissions or sandboxing.
-
-Enable automatic delegation after configuring Jev and installing the executor:
-
-```text
-/jev auto on
-/jev auto-agents on
-/jev schedule explain
-/jev schedule status
-```
-
-The RPC uses the current `script` and `cwd` fields and checks correlation IDs. A missing launch reply is an **unknown outcome**, retained with its request ID; it blocks duplicate scheduling until native completion or authoritative status resolves it. Child failure stops dependent work without automatic replay. Native `pi-subagents` owns result delivery and the completion wake. The last plan and run state are restored from the active session branch; runtime outcome counters and cooldowns reset on reload. Reported authentication/quota/rate-limit failures temporarily exclude the model/provider from future plans; this does not repeat a failed task or switch the Jev transport.
-
-Automatic delegation adds one Jev assessment, one planning-model call, and up to one Jev model-selection call before child execution; ordinary tool/skill routing and child calls can add charges. No spending limit or live capability benchmark is provided. Requests targeting `agent: "jev"` / `"typesafe-jev"` still perform structured judgments, not general-purpose coding.
-
 ### Tool guard and compaction
 
 - Tool guard evaluates only the tool name and arguments, not actual filesystem existence. It blocks calls when the probability of fabricated parameters reaches `0.85`. Evaluation errors **fail open**, so it cannot replace sandboxing, permissions, or deterministic validation.
@@ -285,32 +253,25 @@ The last command sends the file content to the selected Jev service. Inputs incl
 
 The CLI creates its own `JevClient`, reading environment variables and global configuration. It reads a successfully saved `/jev provider` choice, but does not inherit another Pi process's in-memory overrides.
 
-## Code structure
+## Source and verification
 
 | Path | Responsibility |
 | --- | --- |
-| [`extensions/index.ts`](extensions/index.ts) | Tools, commands, startup flags, and lifecycle hooks. |
-| [`src/jev.ts`](src/jev.ts) | Provider/credential resolution, global configuration, transports, and response normalization. |
-| [`src/router.ts`](src/router.ts), [`src/skills.ts`](src/skills.ts), [`src/auto.ts`](src/auto.ts) | Shortlisting, additive activation, skill recommendations, and automatic dispatch. |
-| [`src/tools.ts`](src/tools.ts), [`src/commands.ts`](src/commands.ts) | Tool parameters and `/jev` commands. |
-| [`src/designer.ts`](src/designer.ts) | Evaluation design using the current Pi model. |
-| [`src/model-router.ts`](src/model-router.ts) | Local model selection and temporary avoidance after some HTTP errors. |
-| [`src/task-planner.ts`](src/task-planner.ts) | Bounded conversation/goal context, planning, and dependency validation. |
-| [`src/capability-router.ts`](src/capability-router.ts) | Per-task authenticated/scoped model choices, load, and reported runtime outcomes. |
-| [`src/agent.ts`](src/agent.ts), [`src/orchestrator.ts`](src/orchestrator.ts) | Jev agent RPC, asynchronous execution, and launch/result ownership. |
-| [`src/tool-guard.ts`](src/tool-guard.ts), [`src/compact.ts`](src/compact.ts) | Optional argument checks and bounded history compaction. |
-| [`src/gate.ts`](src/gate.ts), [`bin/jev-gate.js`](bin/jev-gate.js) | Evaluation-based gate CLI and launcher. |
-
-## Development and verification scope
+| [extensions/index.ts](extensions/index.ts) | Integration, hooks and compatibility features. |
+| [src/taskmesh-config.ts](src/taskmesh-config.ts), [src/taskmesh-commands.ts](src/taskmesh-commands.ts) | Independent settings and commands. |
+| [src/decision-backend.ts](src/decision-backend.ts) | Pi/optional Jev decisions, validated JSON and bounded pure inference. |
+| [src/task-planner.ts](src/task-planner.ts), [src/capability-router.ts](src/capability-router.ts) | Context, DAG validation and scoped model assignment. |
+| [src/orchestrator.ts](src/orchestrator.ts) | Native scripts, RPC correlation, state restoration and duplicate protection. |
+| [src/jev.ts](src/jev.ts) | Legacy provider/credential resolution and optional Jev transports. |
 
 ```bash
-git clone https://github.com/0x1f/pi-jev-multi-provider.git
-cd pi-jev-multi-provider
-npm install
+npm ci --ignore-scripts
 npm run typecheck
 npm test
+npm run test:native  # requires the installed compatible pi-subagents package
+npm run smoke        # requires pi-bolt; private offline startup only
 ```
 
-The package also has `npm run smoke`, which starts Pi and submits a prompt. It may use local model credentials, make network requests, and incur charges; it is not an offline unit test. `typecheck` currently excludes `bin/jev-gate-runner.ts`. `npm test` runs offline persistence regressions in fresh child processes and orchestration regressions with local planner/Jev/executor fakes. It covers graph validation, model scopes, dependency output, exclusive writers, launch uncertainty, completion ownership, and command diagnostics without real credentials or child agents. No dependency lockfile is included.
+The lockfile fixes development dependencies, including Pi SDK 0.85.0; typechecking against that SDK does not establish support for every Pi version. The extension declares Node >=20.3; the host may require a newer Node. The native test accepts a package directory as its first argument or `PI_SUBAGENTS_DIR`.
 
-Typechecking and the offline regression suite validate the local contracts. They do not establish live TypeSafe/Vercel compatibility, model quality, or end-to-end paid child execution. No paid inference or `npm run smoke` is part of these checks. Validate your chosen Pi version and providers in a controlled environment before deployment.
+Verification uses synthetic data, fake model/executor responses, fresh-process settings checks, the installed native workflow validator/sandbox with local fake children, and an actual Pi-Bolt load in a private offline config. Smoke blocks network requests and makes no model calls. Runtime regressions and actual host startup were also verified with the optional TypeSafe SDK physically absent. `typecheck` still excludes the legacy Gate runner. These checks establish local contracts; they do not prove live provider compatibility, model quality or paid end-to-end child execution.

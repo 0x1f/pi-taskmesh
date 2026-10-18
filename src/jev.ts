@@ -1,4 +1,4 @@
-import { TypeSafeClient, choice, noul, score } from "@typesafe-ai/sdk";
+import type { TypeSafeClient } from "@typesafe-ai/sdk";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -482,7 +482,8 @@ export class JevClient {
     }
   }
 
-  private getTypeSafeClient(key: string): TypeSafeClient {
+  private async getTypeSafeClient(key: string): Promise<TypeSafeClient> {
+    const { TypeSafeClient } = await import("@typesafe-ai/sdk");
     if (!this.typeSafeClient || this.typeSafeClientKey !== key) {
       const baseURL =
         process.env.TYPESAFE_BASE_URL?.trim() || readGlobalConfig().typesafe?.baseURL?.trim();
@@ -500,6 +501,7 @@ export class JevClient {
     request: JevEvaluationRequest,
     signal?: AbortSignal
   ): Promise<{ answers: Record<string, unknown>; model: string; usage?: any }> {
+    const { choice, noul, score } = await import("@typesafe-ai/sdk");
     const formattedQuestions: Record<string, any> = {};
     for (const [id, q] of Object.entries(request.questions)) {
       if (q.type === "choice") {
@@ -516,7 +518,7 @@ export class JevClient {
     const model = normalizeTypeSafeModel(
       request.model ?? readGlobalConfig().typesafe?.model
     );
-    const client = this.getTypeSafeClient(resolved.key);
+    const client = await this.getTypeSafeClient(resolved.key);
 
     const response: any = await client.systemOne(
       {
