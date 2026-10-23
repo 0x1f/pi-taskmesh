@@ -327,7 +327,8 @@ try {
     } };
     const before = f.handlers.get("before_agent_start")![0];
     const notice = await before({ messageType: "custom", message: { role: "custom", customType: "pi-goal-event", details: checkpoint } }, ctx);
-    assert.match(notice.message.content, /not through codemode/);
+    assert.equal(notice, undefined, "Checkpoint guidance must not inject a new custom message");
+    assert.match(f.tools.get("taskmesh_goal").promptGuidelines.join("\n"), /not through codemode/);
     const run = () => f.tools.get("taskmesh_goal").execute("goal-call", {}, undefined, undefined, ctx);
     return { ...f, goal, checkpoint, ctx, calls, wakes, before, run };
   }

@@ -152,8 +152,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event, ctx) => {
     const handoff = parentHandoff;
     parentHandoff = undefined;
-    const checkpoint = goals.beforeStart(event);
-    if (checkpoint) return { message: checkpoint };
+    if (goals.beforeStart(event)) return;
     if (typeof event.prompt !== "string") return;
     if (handoff?.prompt === event.prompt) {
       return { message: { customType: "taskmesh-parent-handoff", content: handoff.content, display: false } };

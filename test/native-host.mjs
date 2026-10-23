@@ -37,6 +37,7 @@ try {
       assert.equal(data.goal.currentTaskId, "replay");
       assert.deepEqual(data.goal.usage, { tokensUsed: 3000000, activeSeconds: 2400 });
       assert.match(data.hint, /not through codemode/);
+      assert.equal(data.customMessages.includes("taskmesh-goal-checkpoint"), false, "Guidance must not become a scheduler takeover message");
       if (delegated) {
         assert.deepEqual(data.calls, ["get_goal", "get_goal", "update_goal"]);
         assert.match(data.task, /remaining authorized work/);

@@ -1,12 +1,12 @@
 // Loaded only by test:host in a private Pi-Bolt process. No model transport or child execution.
 import { writeFileSync } from "node:fs";
-import { Type, createAssistantMessageEventStream, getCurrentTools } from "@earendil-works/pi-ai";
+import { Type, createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import { GoalBridge } from "../../src/goal-bridge.ts";
 
 globalThis.fetch = async () => { throw new Error("Unexpected network request in Goal tool fixture"); };
 
 export default function (pi) {
-  const report = { requests: 0, spawns: 0, calls: [], declared: [], results: [] };
+  const report = { requests: 0, spawns: 0, calls: [], declared: [], results: [], customMessages: [] };
   const goal = { id: "existing-goal", objective: "Finish the remaining replay feature", status: "active", autoContinue: true,
     currentTaskId: "replay", usage: { tokensUsed: 3000000, activeSeconds: 2400 },
     taskList: { tasks: [{ id: "baseline", title: "Baseline", status: "complete" }, { id: "replay", title: "Replay", status: "pending" }],
@@ -39,10 +39,12 @@ export default function (pi) {
     save();
   });
   pi.on("before_agent_start", () => {
-    const message = bridge.beforeStart({ messageType: "custom", message: { role: "custom", customType: "pi-goal-event",
+    bridge.beforeStart({ messageType: "custom", message: { role: "custom", customType: "pi-goal-event",
       details: { version: 3, kind: "checkpoint", goalId: goal.id, generation: "generation", dispatchId: "dispatch" } } });
-    report.hint = message?.content; save();
-    return { message };
+  });
+  pi.on("message_start", event => {
+    if (event.message.role === "custom") report.customMessages.push(event.message.customType);
+    save();
   });
   pi.on("tool_result", event => {
     report.results.push({ name: event.toolName, content: event.content, isError: event.isError }); save();
@@ -52,7 +54,8 @@ export default function (pi) {
     models: [{ id: "fixture", name: "Fixture", reasoning: false, input: ["text"], contextWindow: 200000, maxTokens: 2048,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
     streamSimple(model, context) {
-      report.requests++; report.declared.push(getCurrentTools(context.messages).map(t => t.name)); save();
+      report.requests++; report.declared.push(getCurrentTools(context.messages).map(t => t.name));
+      report.hint = getCurrentSystemPrompt(context.messages); save();
       const stream = createAssistantMessageEventStream();
       const name = process.env.TASKMESH_HOST_ENTRY;
       const script = "text(ALL_TOOLS.filter(t => t.name === 'taskmesh_goal')); try {text(await tools.taskmesh_goal({}));} catch(e) {text(String(e));}";

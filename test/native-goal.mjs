@@ -5,7 +5,8 @@ import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
-import { GoalBridge } from "../.test-build/src/goal-bridge.js";
+import extension from "../.test-build/extensions/index.js";
+import { AgentOrchestrator } from "../.test-build/src/orchestrator.js";
 
 // Optional installed-host contract test. Private settings/store, real scheduler/runtime, no models or children.
 const goalRoot = resolve(process.argv[2] || process.env.PI_GOAL_DIR || join(homedir(), ".pi/agent/npm/node_modules/pi-goal-x"));
@@ -13,6 +14,7 @@ const goalURL = pathToFileURL(goalRoot + "/").href;
 const root = mkdtempSync(join(tmpdir(), "taskmesh-native-goal-"));
 const env = { ...process.env };
 const originalFetch = globalThis.fetch;
+const agentMethods = Object.getOwnPropertyDescriptors(AgentOrchestrator.prototype);
 const schedulers = [];
 const runtimes = [];
 const goals = [];
@@ -31,8 +33,9 @@ const hooks = registerHooks({
   return next(url, context);
 } });
 globalThis.fetch = async () => { throw new Error("Unexpected network request in native Goal contract test"); };
-for (const key of Object.keys(process.env)) if (key.startsWith("PI_GOAL_")) delete process.env[key];
+for (const key of Object.keys(process.env)) if (key.startsWith("PI_GOAL_") || /^(JEV_|PI_JEV_|PI_TASKMESH$|TYPESAFE_|AI_GATEWAY_API_KEY$)/.test(key)) delete process.env[key];
 process.env.PI_CODING_AGENT_DIR = root;
+process.env.PI_TASKMESH = "1";
 process.env.PI_GOAL_GLOBAL_SETTINGS_FILE = join(root, "global.json");
 process.env.PI_GOAL_SETTINGS_FILE = join(root, "project.json");
 writeFileSync(process.env.PI_GOAL_GLOBAL_SETTINGS_FILE, "{}");
@@ -43,7 +46,11 @@ try {
     writeFileSync(process.env.PI_GOAL_SETTINGS_FILE, JSON.stringify({ strictExecutionContract: strict, maxAutonomousRuns: 5 }));
     invalidateGoalSettingsCache();
     const listeners = new Map(); const tools = new Map(); const delivered = []; const entries = [];
-    const pi = { registerTool(t) { tools.set(t.name, t); }, events: {
+    const handlers = new Map(); const flags = new Map();
+    const pi = { registerTool(t) { tools.set(t.name, t); }, registerCommand() {},
+      registerFlag(name, options) { flags.set(name, options.default); }, getFlag: name => flags.get(name),
+      getActiveTools: () => [], setActiveTools() {}, getAllTools: () => [],
+      on(name, fn) { const list = handlers.get(name) ?? []; list.push(fn); handlers.set(name, list); }, events: {
       on(name, fn) { const list = listeners.get(name) ?? new Set(); list.add(fn); listeners.set(name, list); return () => list.delete(fn); },
       emit(name, event) { for (const fn of listeners.get(name) ?? []) fn(event); },
     } };
@@ -81,15 +88,27 @@ try {
         return { accepted: true };
       },
     };
-    const bridge = new GoalBridge(pi, agents);
+    for (const name of ["hasActive", "goalSchedule", "summary", "assessDetailed", "dispatch"]) AgentOrchestrator.prototype[name] = agents[name];
+    extension(pi);
     scheduler.attach(ctx); scheduler.schedule(ctx);
     async function nextCheckpoint() {
       const deadline = Date.now() + 2000;
       while (!delivered.length && Date.now() < deadline) await new Promise(setImmediate);
       assert.ok(delivered.length, "Native runtime must deliver a bounded checkpoint");
       const message = { role: "custom", customType: "pi-goal-event", ...delivered.shift() };
+      const admitted = structuredClone(core.state.goal.scheduler);
+      const event = { messageType: "custom", message };
+      const injections = [];
+      for (const handler of handlers.get("before_agent_start") ?? []) {
+        const result = await handler(event, ctx);
+        if (result?.message) injections.push({ role: "custom", ...result.message });
+      }
       scheduler.begin(ctx); scheduler.message(ctx, message);
-      assert.ok(bridge.beforeStart({ messageType: "custom", message }));
+      for (const injected of injections) scheduler.message(ctx, injected);
+      assert.equal(core.state.goal.scheduler.phase, "running", "TaskMesh guidance must not take over the native checkpoint");
+      assert.equal(core.state.goal.scheduler.generation, admitted.generation);
+      assert.deepEqual(core.state.goal.scheduler.dispatch, admitted.dispatch);
+      assert.equal(core.state.goal.scheduler.used, admitted.used);
       return message;
     }
     await nextCheckpoint();
@@ -130,6 +149,17 @@ try {
   assert.equal(native.core.state.goal.scheduler.used, 4, "Accepted native completion must not claim a duplicate Goal wake");
   native.scheduler.shutdown(); native.runtime.clearContinuationState();
 
+  for (const message of [{ role: "user", content: "New user work" }, { role: "custom", customType: "unrelated-work", content: "New extension work" }]) {
+    const superseded = await fixture(true);
+    superseded.scheduler.message(superseded.ctx, message);
+    const result = await superseded.run();
+    assert.equal(result.terminate, false); assert.equal(superseded.spawns(), 0);
+    assert.match(result.content[0].text, /Goal checkpoint is stale/);
+    assert.equal(superseded.core.state.goal.scheduler.phase, "idle");
+    assert.equal(superseded.core.state.goal.scheduler.used, 4);
+    superseded.scheduler.shutdown(); superseded.runtime.clearContinuationState();
+  }
+
   const finite = await fixture(true);
   finite.core.state.goal.tokenBudget = 1000;
   assert.equal((await finite.run()).terminate, false); assert.equal(finite.spawns(), 0);
@@ -148,10 +178,11 @@ try {
     assert.deepEqual(core.state.goal.usage, progress.usage);
     assert.deepEqual(core.state.goal.taskList, progress.taskList);
   }
-  console.log("PASS: existing Goal progress/usage/focus preserved, installed Goal scheduler/runtime, default wait refusal, strict wait + terminate, early/late token wake, wrong token, native notice takeover, retained workflow and budget/allowance refusal; synthetic store, zero models/children.");
+  console.log("PASS: production TaskMesh startup/message lifecycle preserves the native checkpoint and Goal progress/usage/focus; installed Goal scheduler/runtime, default wait refusal, strict wait + terminate, early/late token wake, wrong token, genuine user/custom takeover, retained workflow and budget/allowance refusal; synthetic store, zero models/children.");
 } finally {
   for (const scheduler of schedulers) scheduler.shutdown();
   for (const runtime of runtimes) runtime.clearContinuationState();
+  Object.defineProperties(AgentOrchestrator.prototype, agentMethods);
   hooks.deregister(); globalThis.fetch = originalFetch;
   for (const key of Object.keys(process.env)) if (!(key in env)) delete process.env[key];
   Object.assign(process.env, env); rmSync(root, { recursive: true, force: true });

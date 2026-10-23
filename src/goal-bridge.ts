@@ -25,6 +25,14 @@ export class GoalBridge {
       name: "taskmesh_goal", label: "TaskMesh Goal",
       description: "Assess the current native Goal checkpoint for automatic delegation. Call directly and alone, never through codemode or another tool. Requires an active claimed checkpoint and Goal's permission to wait. Otherwise continue with the main agent.",
       exposure: "model-only" as const, executionMode: "sequential" as const,
+      // A custom guidance message would supersede Goal's admitted checkpoint.
+      promptGuidelines: [
+        "For a turn triggered by a native Goal checkpoint, call taskmesh_goal once as a standalone direct tool call, not through codemode, ALL_TOOLS or a shell, before substantive work. " +
+        "It is model-only and intentionally absent from codemode discovery. Do not call it in parallel with other work. " +
+        "If it is not declared, report that the loaded tool is unavailable and continue under the Goal policy; do not invent a shell or codemode fallback. " +
+        "It verifies the live Goal and may decline; then continue with the main agent under the Goal policy without retrying in this checkpoint. " +
+        "Never change Goal settings or its budget to enable delegation. A retained failed workflow must not be replayed automatically.",
+      ],
       reachesTools: () => ["get_goal", "update_goal"],
       parameters: Type.Object({}, { additionalProperties: false }),
       execute: (_id: string, _params: {}, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: GoalContext) => this.execute(ctx, signal),
@@ -34,20 +42,15 @@ export class GoalBridge {
 
   reset(): void { this.checkpoint = undefined; }
 
-  beforeStart(event: unknown): { customType: string; content: string; display: boolean } | undefined {
+  beforeStart(event: unknown): boolean {
     this.reset();
     const e = event as { messageType?: string; message?: { role?: string; customType?: string; details?: Record<string, unknown> } };
     const d = e.message?.details;
     if (!this.agents.enabled || e.messageType !== "custom" || e.message?.customType !== "pi-goal-event" ||
         d?.version !== 3 || d.kind !== "checkpoint" ||
-        ![d.goalId, d.generation, d.dispatchId].every(v => typeof v === "string" && v.length > 0 && v.length <= 256)) return;
+        ![d.goalId, d.generation, d.dispatchId].every(v => typeof v === "string" && v.length > 0 && v.length <= 256)) return false;
     this.checkpoint = { goalId: d.goalId as string, generation: d.generation as string, dispatchId: d.dispatchId as string };
-    return { customType: "taskmesh-goal-checkpoint", display: false,
-      content: "This turn is a Goal checkpoint. Call taskmesh_goal once as a standalone direct tool call, not through codemode, ALL_TOOLS or a shell, before substantive work. " +
-        "It is model-only and intentionally absent from codemode discovery. Do not call it in parallel with other work. " +
-        "If it is not declared, report that the loaded tool is unavailable and continue under the Goal policy; do not invent a shell or codemode fallback. " +
-        "It verifies the live Goal and may decline; then continue with the main agent under the Goal policy. " +
-        "Never change Goal settings or its budget to enable delegation. A retained failed workflow must not be replayed automatically." };
+    return true;
   }
 
   private async execute(ctx: GoalContext, signal?: AbortSignal) {
