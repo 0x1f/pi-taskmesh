@@ -114,6 +114,8 @@ Jev 判断合适的请求是否需要委派，并为各子任务选择模型；P
 
 `taskmesh_goal` 必须由模型**单独直接调用**，不能在 `codemode` 中执行 `tools.taskmesh_goal()`，它也不是斜杠命令。它的 model-only 暴露方式有意不加入 `ALL_TOOLS` 或 codemode 发现列表，以保留原生结束轮次/等待语义；已测试的 Pi-Bolt 在 codemode 的 `on` 和 `only` 模式下都会直接声明它。如果模型实际收到的工具声明中没有它，应重新加载/检查扩展，不要尝试嵌套调用或 shell 替代。0.8.1 还修正了原生 `ctx.executeTool` 返回值封装；0.8.0 可能将有效的既有 Goal 错判为过期。
 
+`taskmesh_goal` 返回 `resume` 只表示把剩余工作交回主代理，不会更新任务或完成 Goal。主代理必须推进获授权的下一步，用 `update_goal_task` 和证据登记已核实的任务，再在所有要求通过后调用 `update_goal({status: "complete"})` 提交完成审查；仅回复“检查点确认、无变化”不能完成目标。
+
 Goal 派生任务使用同一套逐节点选型和读任务并发设置：scout、实现、审查可以使用不同的已认证、scope 内模型，不必跟随主代理模型，也不强制为多样性而换模型。切换并发只影响后续新计划，不改变已保留的 Goal 工作流。
 
 启动任何子任务前，必须先由 `update_goal` 接受原生 `wait` disposition 并返回等待 token。已验证的 Goal 0.32.3 要求新等待使用已有的 `strictExecutionContract` 选择，该设置默认 `false`。如需启用这项 Goal 策略，将下面字段合并到项目 `.pi/pi-goal-x-settings.json` 或全局 `~/.pi/agent/pi-goal-x-settings.json`：
@@ -124,7 +126,7 @@ Goal 派生任务使用同一套逐节点选型和读任务并发设置：scout�
 }
 ```
 
-它也会改变其他 Goal 轮次的续跑合同，TaskMesh 不会自动修改。等待被拒绝时不启动子任务，仍由主代理执行；拒绝前已经发生的判断、规划可能计费。
+它也会改变其他 Goal 轮次的续跑合同：每次执行需要明确保存 ready、wait 或生命周期状态；缺少处置时仅补发一轮修复提示，仍无处置就暂停，可阻止反复确认检查点的空转。它不是 token 费用上限。TaskMesh 不会自动修改这项设置。等待被拒绝时不启动子任务，仍由主代理执行；拒绝前已经发生的判断、规划可能计费。
 
 等待 token 在启动前持久化，取得等待许可后才结束父轮次。原生完成消息唤起父代理；原生没有接受唤起轮次时，TaskMesh 使用 Goal 校验 token 的 wake 事件。等待期限为一小时，由 Goal 原有策略处理。明确的启动前拒绝会解除等待；启动结果未知时保留记录，绝不自动重放。后续 checkpoint 复用该 Goal 的已有工作流，包括切换 Goal 或重新加载当前会话分支后。
 

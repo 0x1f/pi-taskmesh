@@ -14,7 +14,7 @@ export default function (pi) {
     scheduler: { owner: "", generation: "generation", phase: "running", dispatch: { id: "dispatch" } } };
   const save = () => writeFileSync(process.env.TASKMESH_HOST_REPORT, JSON.stringify({ ...report, goal }));
   const agents = { enabled: true, hasActive: () => false, goalSchedule: () => undefined,
-    summary: () => "Waiting for synthetic workflow", assessDetailed: async () => ({ kind: "team" }),
+    summary: () => "Waiting for synthetic workflow", assessDetailed: async () => ({ kind: process.env.TASKMESH_HOST_DECISION || "team", reason: "Owned offline decision" }),
     async dispatch(task, _ctx, _automatic, beforeSpawn) {
       try { await beforeSpawn(); report.spawns++; report.task = task; save(); return { accepted: true }; }
       catch (error) { return { accepted: false, error: String(error) }; }

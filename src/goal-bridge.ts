@@ -32,6 +32,7 @@ export class GoalBridge {
         "If it is not declared, report that the loaded tool is unavailable and continue under the Goal policy; do not invent a shell or codemode fallback. " +
         "It verifies the live Goal and may decline; then continue with the main agent under the Goal policy without retrying in this checkpoint. " +
         "Never change Goal settings or its budget to enable delegation. A retained failed workflow must not be replayed automatically.",
+        "A resume decision returns remaining work to the main agent. Save verified task progress and any disposition required by Goal policy; checkpoint acknowledgement alone is not work.",
       ],
       reachesTools: () => ["get_goal", "update_goal"],
       parameters: Type.Object({}, { additionalProperties: false }),
@@ -97,7 +98,11 @@ export class GoalBridge {
       if (task.length > 32000) return response("Goal requirements exceed TaskMesh's bounded input. Continue with the main agent without truncating the requirements.");
       const decision = await this.agents.assessDetailed(task, ctx);
       current();
-      if (decision.kind !== "team") return response("TaskMesh Goal decision: " + decision.kind + ". " + decision.reason + " Continue with the main agent under the Goal policy.");
+      if (decision.kind !== "team") return response("TaskMesh Goal decision: " + decision.kind + ". " + decision.reason +
+        " Continue with the main agent under the Goal policy. This delegation decision does not update Goal progress. " +
+        "Perform the next authorized step; record verified task completion with update_goal_task and evidence. " +
+        'Once all requirements are verified, request completion with update_goal({status: "complete"}); otherwise save the disposition required by Goal policy. ' +
+        "Do not end with only a checkpoint acknowledgement.");
       const result = await this.agents.dispatch(task, ctx, true, async (): Promise<GoalWait> => {
         await read(); // Planning can take time; recheck immediately before the wait and spawn.
         current();

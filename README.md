@@ -114,6 +114,8 @@ With `/taskmesh on`, a version-3 checkpoint from a compatible `pi-goal-x` uses t
 
 `taskmesh_goal` must be a **standalone direct model tool call**, not `tools.taskmesh_goal()` inside `codemode` and not a slash command. Its model-only exposure deliberately excludes it from `ALL_TOOLS` and codemode discovery, preserving native end-turn/wait semantics. The tested Pi-Bolt declares it directly in both codemode `on` and `only` modes. If it is missing from the model\'s declared tools, reload/check the extension rather than inventing a nested or shell fallback. Version 0.8.1 also corrects the native `ctx.executeTool` result envelope; 0.8.0 could incorrectly reject a valid existing Goal as stale.
 
+A `resume` result from `taskmesh_goal` hands remaining work back to the main agent; it does not update tasks or complete the Goal. The main agent must advance the next authorized step, record verified tasks with `update_goal_task` and evidence, then request `update_goal({status: "complete"})` only after all requirements are verified. A checkpoint acknowledgement alone does not satisfy the Goal.
+
 Goal-derived tasks use the same per-node routing and reader concurrency setting. Scout, implementation and review can receive different authenticated, scoped models; they are not forced to share the parent model, nor forced to differ. Changing concurrency affects only a future plan, not the retained Goal workflow.
 
 Before any child launch, `update_goal` must accept a native `wait` disposition and return its wait token. In the tested Goal 0.32.3, new waits require the existing `strictExecutionContract` opt-in, which defaults to `false`. To opt into that Goal policy, merge this existing setting into the project's `.pi/pi-goal-x-settings.json` or the global `~/.pi/agent/pi-goal-x-settings.json`:
@@ -124,7 +126,7 @@ Before any child launch, `update_goal` must accept a native `wait` disposition a
 }
 ```
 
-This also changes Goal's continuation contract outside TaskMesh. TaskMesh does not change it automatically. If the wait is refused, Goal remains with the main agent and no child is launched; assessment/planning calls can still incur cost before that refusal.
+This also changes Goal's continuation contract outside TaskMesh: each execution must save a ready/wait decision or lifecycle status. A missing disposition receives one repair prompt, then pauses if still missing, preventing repeated acknowledgement-only checkpoints. This is not a token-spending cap. TaskMesh does not change the setting automatically. If the wait is refused, Goal remains with the main agent and no child is launched; assessment/planning calls can still incur cost before that refusal.
 
 The wait token is persisted before spawning. The outer Goal tool ends the parent turn only after Goal grants the wait. Native completion delivery resumes the parent; where no native turn was accepted, TaskMesh emits Goal's token-checked wake event. The wait has a one-hour deadline handled by Goal's policy. A known pre-launch rejection releases the wait; an unknown launch stays retained and is never replayed. Later checkpoints reuse the Goal's recorded workflow, including after switching Goals or reloading the session branch.
 
