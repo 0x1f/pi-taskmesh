@@ -104,7 +104,7 @@ Jev 判断合适的请求是否需要委派，并为各子任务选择模型；P
 
 ### 完成或失败后继续父任务
 
-自动判断将 `continue` 等消息归为 `resume` 时，运行中、暂停或启动结果未知的工作流显示简短状态；已经结束的工作流则把原始消息交回主代理，并附带隐藏的结果交接，说明原运行 ID、可确定的失败节点/模型和结果路径。主代理读取已有证据后继续获授权的父任务。工作流 completed 不代表整个父目标已经完成。显式 `/taskmesh resume` 仍只查询状态，不重试子任务。
+自动判断将 `continue` 等消息归为 `resume` 时，运行中、暂停或启动结果未知的工作流显示简短状态；已经结束的工作流则把原始消息交回主代理，并附带隐藏的结果交接，说明原运行 ID、可确定的失败节点/模型和结果路径。主代理读取已有证据后继续获授权的父任务。工作流 completed 不代表整个父目标已经完成。显式 `/taskmesh resume` 仍只查询状态，不重试子任务。状态查询和已有 Goal 工作流的 checkpoint 会核对匹配的原生工作流状态，即使重载遗漏了完成通知，或有限的内存快照已不含该运行；证据缺失或身份不符时继续保留防重派保护。
 
 ### 原生 Goal checkpoint
 
@@ -328,6 +328,7 @@ npm ci --ignore-scripts
 npm run typecheck
 npm test
 npm run test:native  # 需要已安装的兼容 pi-subagents
+npm run test:status  # 需要 pi-bolt 和兼容 pi-subagents；隔离原生状态/RPC，不调用模型或子代理
 npm run test:goal    # 需要兼容 pi-goal-x，Node 支持 module.registerHooks
 npm run test:host    # 需要 pi-bolt，真实工具分发与合成模型/Goal/执行器
 npm run smoke        # 需要 pi-bolt，仅做私有配置离线加载

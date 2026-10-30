@@ -59,6 +59,7 @@ try {
     const core = { pi, state: { goal: { ...createGoal({ objective: "Implement and verify the remaining parser work" }), autoContinue: true, ...structuredClone(progress),
       scheduler: { ...newGoalScheduler("native-fixture"), used: 3, phase: "ready", decision: { kind: "ready", purpose: "kickoff" } } } },
       updateUI() {}, reconcileFocusedGoalFromDisk() {}, clearActiveAccounting() {},
+      interruption: { isHeld: () => false, resumed() {} },
       goalService: { flushForAudit() {}, isTurnBuffered: () => false, apply(_ctx, { expectedGoalId, mutate }) {
         assert.equal(expectedGoalId, core.state.goal.id);
         core.state.goal = mutate(structuredClone(core.state.goal));

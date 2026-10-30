@@ -1,3 +1,4 @@
+import { dirname, isAbsolute } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { JevClient } from "./jev.js";
 import { CapabilityRouter, recordModelLoad } from "./capability-router.js";
@@ -240,17 +241,27 @@ export class AgentOrchestrator {
     const reply = await this.request("status", { id: current.runId, cwd: current.cwd }, ctx.signal);
     if (this.last !== current) return "Session changed while checking status.";
     if (this.revision !== revision) return this.explain() + "\nExecutor: Ignored an older status reply after a newer execution event.";
-    if (reply.success) {
-      const runId = reply.data?.details?.runId;
+    if (reply.success && !reply.data?.isError) {
+      const details = reply.data?.details;
+      const runId = details?.runId;
       if (typeof runId === "string" && runId && runId !== current.runId && current.runId !== "rpc-spawn-" + current.requestId) {
         return this.explain() + "\nExecutor: Ignored status for a different run.";
       }
+      const workflow = details?.workflowChildren;
+      if (workflow && (workflow.workflowRunId !== (runId ?? current.runId) ||
+          workflow.parentToolCallId !== "rpc-spawn-" + current.requestId)) {
+        return this.explain() + "\nExecutor: Ignored status for a different workflow.";
+      }
       if (typeof runId === "string" && runId) this.last.runId = runId;
       const run = reply.data?.asyncSnapshot?.runs?.find((r: any) => r.id === this.last?.runId);
-      const state = run?.state === "complete" ? "completed" : run?.state;
+      // Targeted disk status survives reloads and the bounded live snapshot omitting this run.
+      const observed = workflow?.version === 1 ? workflow.workflowState : run?.state;
+      const state = observed === "complete" ? "completed" : observed;
       if (["running", "completed", "failed", "stopped", "paused", "partial", "rejected"].includes(state) && (this.active() || state === this.last.state)) {
         this.last.state = state;
         if (state === "completed") this.last.error = undefined;
+        const receiptPath = details?.workflowReceiptPath;
+        if (typeof receiptPath === "string" && receiptPath.length <= 4096 && isAbsolute(receiptPath)) this.last.artifactsDir = dirname(receiptPath);
         this.save();
         this.wakeGoal();
       }
@@ -258,9 +269,11 @@ export class AgentOrchestrator {
     return this.explain() + "\nExecutor: " + (reply.success ? reply.data?.text ?? JSON.stringify(reply.data) : reply.error?.message ?? "unavailable");
   }
 
-  public goalSchedule(goalId: string): string | undefined {
+  public async goalSchedule(goalId: string, ctx: ExtensionContext): Promise<string | undefined> {
     const retained = this.goalSchedules.get(goalId);
-    return retained ? this.summary(retained) : undefined;
+    if (!retained) return;
+    if (retained === this.last && this.active(retained)) await this.status(ctx);
+    return this.goalSchedules.get(goalId) === retained ? this.summary(retained) : undefined;
   }
 
   private wakeGoal(nativeWake = false): void {

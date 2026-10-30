@@ -71,6 +71,7 @@ function fixture(mode: "ok" | "reject" | "unknown" | "no-executor" = "ok") {
   const controller = new AbortController();
   let spawns = 0;
   let onSpawn: (() => void) | undefined;
+  let statusData: any;
   const commands = new Map<string, Function>();
   const tools = new Map<string, any>();
   const completions = new Map<string, Function>();
@@ -81,7 +82,7 @@ function fixture(mode: "ok" | "reject" | "unknown" | "no-executor" = "ok") {
       if (name !== "subagents:rpc:v1:request") return;
       requests.push(data);
       if (mode === "no-executor") { controller.abort(); return; }
-      let payload: any = data.method === "ping" ? { capabilities: { asyncSpawn: true } } : { fleet: { entries: [] }, asyncSnapshot: { runs: [] }, text: "executor status" };
+      let payload: any = data.method === "ping" ? { capabilities: { asyncSpawn: true } } : statusData ?? { fleet: { entries: [] }, asyncSnapshot: { runs: [] }, text: "executor status" };
       if (data.method === "spawn") {
         spawns++;
         assert.equal(data.params.async, true);
@@ -122,7 +123,7 @@ function fixture(mode: "ok" | "reject" | "unknown" | "no-executor" = "ok") {
     },
     ui: { notify(text: string) { notices.push(text); }, setStatus() {} },
   } as unknown as ExtensionContext;
-  return { pi, ctx, bus, entries, requests, notices, handlers, plans, listeners, controller, completions, tools, onSpawn: (callback: () => void) => { onSpawn = callback; }, spawns: () => spawns, command: (...args: any[]) => commands.get("jev")!(...args), taskmesh: (...args: any[]) => commands.get("taskmesh")!(...args) };
+  return { pi, ctx, bus, entries, requests, notices, handlers, plans, listeners, controller, completions, tools, setStatusReply: (data: any) => { statusData = data; }, onSpawn: (callback: () => void) => { onSpawn = callback; }, spawns: () => spawns, command: (...args: any[]) => commands.get("jev")!(...args), taskmesh: (...args: any[]) => commands.get("taskmesh")!(...args) };
 }
 
 try {
@@ -253,6 +254,48 @@ try {
   }
   racing.dispose();
 
+  // Reload can miss completion, and the bounded live snapshot can omit the retained run.
+  const savedRunning = { ...structuredClone(f.entries.filter(e => e.customType === "taskmesh-orchestration").at(-1).data), state: "running" };
+  const retainedStatus = (state: string, snapshot = false, requestId = savedRunning.requestId) => ({
+    details: { runId: "owned-run", workflowReceiptPath: join(root, "owned-run", "workflow-receipt.json"),
+      workflowChildren: { version: 1, parentToolCallId: "rpc-spawn-" + requestId,
+        workflowRunId: "owned-run", inventoryComplete: true, workflowState: state, children: [] } },
+    asyncSnapshot: { runs: snapshot ? [{ id: "owned-run", state: "running" }] : [] }, text: "executor status",
+  });
+  for (const state of ["completed", "failed", "stopped", "paused"]) {
+    const missed = fixture();
+    missed.entries.push({ type: "custom", customType: "taskmesh-orchestration", data: structuredClone(savedRunning) });
+    const recovering = new AgentOrchestrator(missed.pi, undefined, true);
+    recovering.restore(missed.ctx);
+    missed.setStatusReply(retainedStatus(state, state === "stopped"));
+    assert.match(await recovering.resume(missed.ctx, true), new RegExp("TaskMesh " + state));
+    assert.ok(recovering.summary().includes(join(root, "owned-run", "status.json")));
+    assert.equal(recovering.hasActive(), state === "paused");
+    recovering.restore(missed.ctx);
+    assert.match(recovering.explain(), new RegExp("State: " + state));
+    assert.equal(missed.spawns(), 0, "Status recovery must never spawn children");
+    recovering.dispose();
+  }
+  for (const invalid of ["other-run", "other-workflow", "other-request", "missing-state", "rpc-error"]) {
+    const missed = fixture();
+    missed.entries.push({ type: "custom", customType: "taskmesh-orchestration", data: structuredClone(savedRunning) });
+    const recovering = new AgentOrchestrator(missed.pi);
+    recovering.restore(missed.ctx);
+    const data: any = retainedStatus("stopped");
+    if (invalid === "other-run") data.details.runId = "different-run";
+    if (invalid === "other-workflow") data.details.workflowChildren.workflowRunId = "different-run";
+    if (invalid === "other-request") data.details.workflowChildren.parentToolCallId = "rpc-spawn-different-request";
+    if (invalid === "missing-state") delete data.details.workflowChildren;
+    if (invalid === "rpc-error") data.isError = true;
+    data.text = "State: stopped";
+    missed.setStatusReply(data);
+    await recovering.status(missed.ctx);
+    assert.equal(recovering.hasActive(), true, invalid + " must not release duplicate protection");
+    assert.match(recovering.summary(), /Run: owned-run/);
+    assert.equal(missed.spawns(), 0);
+    recovering.dispose();
+  }
+
   // Goal history survives switching goals and reload; an older failure must not be replayed.
   const history = fixture();
   const historical = new AgentOrchestrator(history.pi, new JevClient(), true);
@@ -262,11 +305,11 @@ try {
   history.bus.emit("subagent:async-complete", { runId: "owned-run", state: "failed", error: "Retained failure" });
   await historical.dispatch("Goal B", history.ctx, true, lease("goal-b"));
   history.bus.emit("subagent:async-complete", { runId: "owned-run", state: "complete" });
-  assert.match(historical.goalSchedule("goal-a")!, /TaskMesh failed/);
-  assert.match(historical.goalSchedule("goal-b")!, /TaskMesh completed/);
+  assert.match((await historical.goalSchedule("goal-a", history.ctx))!, /TaskMesh failed/);
+  assert.match((await historical.goalSchedule("goal-b", history.ctx))!, /TaskMesh completed/);
   historical.restore(history.ctx);
-  assert.match(historical.goalSchedule("goal-a")!, /Retained failure/);
-  assert.match(historical.goalSchedule("goal-b")!, /TaskMesh completed/);
+  assert.match((await historical.goalSchedule("goal-a", history.ctx))!, /Retained failure/);
+  assert.match((await historical.goalSchedule("goal-b", history.ctx))!, /TaskMesh completed/);
   assert.equal(history.spawns(), 2); historical.dispose();
 
   // Completed work is handed back to the parent instead of swallowing “continue”.
@@ -291,6 +334,19 @@ try {
   assert.equal(continued.spawns(), 1);
   decisionKind = undefined;
   for (const h of continued.handlers.get("session_shutdown") ?? []) await h({}, continued.ctx);
+
+  // A stopped native run without a completion event must return control to the parent.
+  const missedContinue = fixture(); extension(missedContinue.pi);
+  missedContinue.entries.push({ type: "custom", customType: "taskmesh-orchestration", data: structuredClone(savedRunning) });
+  for (const h of missedContinue.handlers.get("session_start") ?? []) await h({}, missedContinue.ctx);
+  missedContinue.setStatusReply(retainedStatus("stopped"));
+  decisionKind = "resume";
+  assert.equal((await missedContinue.handlers.get("input")![0]({ source: "interactive", text: "继续" }, missedContinue.ctx)).action, "continue");
+  const stoppedHandoff = await missedContinue.handlers.get("before_agent_start")![0]({ prompt: "继续" }, missedContinue.ctx);
+  assert.match(stoppedHandoff.message.content, /TaskMesh stopped/);
+  assert.equal(missedContinue.spawns(), 0);
+  decisionKind = undefined;
+  for (const h of missedContinue.handlers.get("session_shutdown") ?? []) await h({}, missedContinue.ctx);
 
   // Revoking automatic delegation while Goal grants its wait must release it without spawning.
   const revoked = fixture();
@@ -332,6 +388,18 @@ try {
     const run = () => f.tools.get("taskmesh_goal").execute("goal-call", {}, undefined, undefined, ctx);
     return { ...f, goal, checkpoint, ctx, calls, wakes, before, run };
   }
+  const stoppedGoal = await goalFixture();
+  await stoppedGoal.run();
+  stoppedGoal.goal.scheduler.phase = "running";
+  stoppedGoal.goal.scheduler.generation = "generation";
+  const stoppedRequestId = stoppedGoal.entries.filter(e => e.customType === "taskmesh-orchestration").at(-1).data.requestId;
+  stoppedGoal.setStatusReply(retainedStatus("stopped", false, stoppedRequestId));
+  const stoppedGoalResult = await stoppedGoal.run();
+  assert.equal(stoppedGoalResult.terminate, false);
+  assert.match(stoppedGoalResult.content[0].text, /TaskMesh stopped/);
+  assert.equal(stoppedGoal.spawns(), 1, "An existing Goal workflow must not be replayed after reload");
+  for (const h of stoppedGoal.handlers.get("session_shutdown") ?? []) await h({}, stoppedGoal.ctx);
+
   const rejectedGoal = await goalFixture();
   const getRejectedGoal = rejectedGoal.ctx.executeTool;
   rejectedGoal.ctx.executeTool = async (name, input) => ({ ...await getRejectedGoal(name, input), isError: true });

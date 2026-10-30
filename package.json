@@ -36,6 +36,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsc --noEmit false --outDir .test-build && node .test-build/test/persistence.js && node .test-build/test/orchestration.js && node .test-build/test/routing.js && node .test-build/test/concurrency.js",
     "test:native": "tsc --noEmit false --outDir .test-build && node test/native-workflow.mjs",
+    "test:status": "node test/native-status.mjs",
     "test:goal": "tsc --noEmit false --outDir .test-build && node test/native-goal.mjs",
     "test:host": "node test/native-host.mjs",
     "smoke": "node test/smoke.mjs"

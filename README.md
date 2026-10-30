@@ -104,7 +104,7 @@ Automatic mode can make a paid Pi judgment even for requests ultimately kept sol
 
 ### Continuing after completion or failure
 
-When automatic judgment classifies a message such as `continue` as `resume`, an active/paused/unknown workflow shows its concise status. For a terminal workflow, the original message proceeds to the main agent with a hidden handoff identifying the retained run, failure/task/model when available, and saved-result paths. The main agent can inspect the evidence and continue the authorized parent task. A completed workflow does not by itself establish that the parent's goal is satisfied. An explicit `/taskmesh resume` remains a status command; it never retries children.
+When automatic judgment classifies a message such as `continue` as `resume`, an active/paused/unknown workflow shows its concise status. For a terminal workflow, the original message proceeds to the main agent with a hidden handoff identifying the retained run, failure/task/model when available, and saved-result paths. The main agent can inspect the evidence and continue the authorized parent task. A completed workflow does not by itself establish that the parent's goal is satisfied. An explicit `/taskmesh resume` remains a status command; it never retries children. Status queries and retained Goal checkpoints reconcile the matching native workflow state even after a reload missed its completion notification or the bounded live snapshot omitted the run. Missing or mismatched evidence keeps duplicate protection in place.
 
 ### Native Goal checkpoints
 
@@ -328,6 +328,7 @@ npm ci --ignore-scripts
 npm run typecheck
 npm test
 npm run test:native  # requires the installed compatible pi-subagents package
+npm run test:status  # requires pi-bolt + compatible pi-subagents; private native status/RPC, no model or child calls
 npm run test:goal    # requires compatible pi-goal-x and Node with module.registerHooks
 npm run test:host    # requires pi-bolt; actual tool dispatch with synthetic model/Goal/executor
 npm run smoke        # requires pi-bolt; private offline startup only

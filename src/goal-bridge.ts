@@ -89,7 +89,8 @@ export class GoalBridge {
     };
     try {
       const goal = await read();
-      const retained = this.agents.goalSchedule(goal.id);
+      const retained = await this.agents.goalSchedule(goal.id, ctx);
+      current();
       if (retained) return response(retained);
       if (this.agents.hasActive()) return response("Another TaskMesh workflow is already active. Inspect its retained results before starting concurrent work. " + this.agents.summary());
       const task = "Execute only the remaining authorized work for Goal " + goal.id + ". Reuse completed evidence; do not replay completed steps.\nObjective:\n" + goal.objective +
