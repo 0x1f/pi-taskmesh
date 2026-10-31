@@ -74,6 +74,7 @@ function fixture(mode: "ok" | "reject" | "unknown" | "no-executor" = "ok") {
   let statusData: any;
   const commands = new Map<string, Function>();
   const tools = new Map<string, any>();
+  let activeTools = ["read"];
   const completions = new Map<string, Function>();
   const bus = {
     on(name: string, handler: Function) { const set = listeners.get(name) ?? new Set(); set.add(handler); listeners.set(name, set); return () => { set.delete(handler); }; },
@@ -104,10 +105,10 @@ function fixture(mode: "ok" | "reject" | "unknown" | "no-executor" = "ok") {
     appendEntry(customType: string, data: unknown) { entries.push({ type: "custom", customType, data: structuredClone(data) }); },
     registerFlag(name: string, options: any) { flags.set(name, options.default); },
     getFlag(name: string) { return flags.get(name); },
-    registerTool(tool: any) { tools.set(tool.name, tool); },
+    registerTool(tool: any) { tools.set(tool.name, tool); activeTools.push(tool.name); },
     registerCommand(name: string, options: any) { commands.set(name, options.handler); completions.set(name, options.getArgumentCompletions); },
     on(name: string, handler: Function) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
-    getActiveTools() { return ["read"]; }, setActiveTools() {}, getAllTools() { return [{ name: "read" }]; },
+    getActiveTools() { return [...activeTools]; }, setActiveTools(names: string[]) { activeTools = [...names]; }, getAllTools() { return [{ name: "read" }]; },
   } as unknown as ExtensionAPI;
   const ctx = {
     cwd: root, signal: controller.signal, scopedModels: [], isIdle: () => true,
@@ -367,6 +368,7 @@ try {
   async function goalFixture(mode: "ok" | "reject" | "unknown" = "ok", strict = true) {
     const f = fixture(mode); extension(f.pi);
     for (const h of f.handlers.get("session_start") ?? []) await h({}, f.ctx);
+    assert.equal(f.pi.getActiveTools().includes("taskmesh_goal"), false, "Ordinary turns must not expose the Goal checkpoint tool");
     const checkpoint = { version: 3, kind: "checkpoint", goalId: "goal-fixture", generation: "generation", dispatchId: "dispatch" };
     const goal: any = { id: checkpoint.goalId, objective: "Refactor and verify the parser", status: "active", autoContinue: true,
       scheduler: { owner: "fixture-session", generation: "generation", phase: "running", dispatch: { id: "dispatch" } } };
@@ -384,16 +386,33 @@ try {
     const before = f.handlers.get("before_agent_start")![0];
     const notice = await before({ messageType: "custom", message: { role: "custom", customType: "pi-goal-event", details: checkpoint } }, ctx);
     assert.equal(notice, undefined, "Checkpoint guidance must not inject a new custom message");
+    assert.equal(f.pi.getActiveTools().includes("taskmesh_goal"), true);
     assert.match(f.tools.get("taskmesh_goal").promptGuidelines.join("\n"), /not through codemode/);
     const run = () => f.tools.get("taskmesh_goal").execute("goal-call", {}, undefined, undefined, ctx);
     return { ...f, goal, checkpoint, ctx, calls, wakes, before, run };
   }
+  const oneShotGoal = await goalFixture();
+  decisionKind = "solo";
+  assert.match((await oneShotGoal.run()).content[0].text, /TaskMesh Goal decision: solo/);
+  assert.equal(oneShotGoal.pi.getActiveTools().includes("taskmesh_goal"), false, "A refusal must remove the tool before the next model request");
+  assert.match((await oneShotGoal.run()).content[0].text, /delegation unavailable/);
+  assert.deepEqual(oneShotGoal.calls, ["get_goal"], "A repeated call must not reassess the same checkpoint");
+  oneShotGoal.goal.scheduler.dispatch.id = "next-dispatch";
+  await oneShotGoal.before({ messageType: "custom", message: { customType: "pi-goal-event", details: { ...oneShotGoal.checkpoint, dispatchId: "next-dispatch" } } }, oneShotGoal.ctx);
+  assert.equal(oneShotGoal.pi.getActiveTools().includes("taskmesh_goal"), true, "A fresh checkpoint must re-enable one assessment");
+  await oneShotGoal.run();
+  assert.deepEqual(oneShotGoal.calls, ["get_goal", "get_goal"]);
+  assert.equal(oneShotGoal.spawns(), 0);
+  decisionKind = undefined;
+  for (const h of oneShotGoal.handlers.get("session_shutdown") ?? []) await h({}, oneShotGoal.ctx);
+
   const stoppedGoal = await goalFixture();
   await stoppedGoal.run();
   stoppedGoal.goal.scheduler.phase = "running";
   stoppedGoal.goal.scheduler.generation = "generation";
   const stoppedRequestId = stoppedGoal.entries.filter(e => e.customType === "taskmesh-orchestration").at(-1).data.requestId;
   stoppedGoal.setStatusReply(retainedStatus("stopped", false, stoppedRequestId));
+  await stoppedGoal.before({ messageType: "custom", message: { customType: "pi-goal-event", details: stoppedGoal.checkpoint } }, stoppedGoal.ctx);
   const stoppedGoalResult = await stoppedGoal.run();
   assert.equal(stoppedGoalResult.terminate, false);
   assert.match(stoppedGoalResult.content[0].text, /TaskMesh stopped/);
@@ -469,6 +488,7 @@ try {
   await forgedGoal.before({ messageType: "user", prompt: "pi-goal-event checkpoint" }, forgedGoal.ctx);
   assert.equal((await forgedGoal.run()).terminate, false);
   assert.equal(forgedGoal.calls.length, 0);
+  assert.equal(forgedGoal.pi.getActiveTools().includes("taskmesh_goal"), false);
   for (const h of forgedGoal.handlers.get("session_shutdown") ?? []) await h({}, forgedGoal.ctx);
 
   const unknown = fixture("unknown");

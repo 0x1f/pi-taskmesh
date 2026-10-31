@@ -12,7 +12,7 @@ writeFileSync(checker,   "import {writeFileSync} from 'node:fs';\n" +
   "globalThis.fetch = async () => { throw new Error('Unexpected network request in offline host smoke'); };\n" +
   "export default function(pi) { pi.on('session_start', async (_event, ctx) => {\n" +
   "const commands = pi.getCommands().map(c => c.name);\n" +
-  "const checks = {taskmesh:commands.includes('taskmesh'), goalTool:pi.getAllTools().some(t => t.name === 'taskmesh_goal' && t.exposure === 'model-only'), goalActive:pi.getActiveTools().includes('taskmesh_goal'), legacy:commands.includes('jev'), inference:typeof ctx.modelRegistry.complete === 'function', available:typeof ctx.modelRegistry.getAvailable === 'function', bus:typeof pi.events.emit === 'function', noJevTools:!pi.getActiveTools().some(n => n.startsWith('jev_'))};\n" +
+  "const checks = {taskmesh:commands.includes('taskmesh'), goalTool:pi.getAllTools().some(t => t.name === 'taskmesh_goal' && t.exposure === 'model-only'), noGoalOutsideCheckpoint:!pi.getActiveTools().includes('taskmesh_goal'), legacy:commands.includes('jev'), inference:typeof ctx.modelRegistry.complete === 'function', available:typeof ctx.modelRegistry.getAvailable === 'function', bus:typeof pi.events.emit === 'function', noJevTools:!pi.getActiveTools().some(n => n.startsWith('jev_'))};\n" +
   "writeFileSync(process.env.TASKMESH_SMOKE_REPORT, JSON.stringify(checks)); ctx.shutdown(); }); }\n");
 try {
   const result = spawnSync(process.env.PI_BOLT_BIN || "pi-bolt", [

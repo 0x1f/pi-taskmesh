@@ -20,7 +20,8 @@ type GoalContext = ExtensionContext & {
 export class GoalBridge {
   private checkpoint?: Checkpoint;
   private busy = false;
-  constructor(pi: ExtensionAPI, private agents: AgentOrchestrator) {
+  private available = false;
+  constructor(private pi: ExtensionAPI, private agents: AgentOrchestrator) {
     const tool = {
       name: "taskmesh_goal", label: "TaskMesh Goal",
       description: "Assess the current native Goal checkpoint for automatic delegation. Call directly and alone, never through codemode or another tool. Requires an active claimed checkpoint and Goal's permission to wait. Otherwise continue with the main agent.",
@@ -41,7 +42,13 @@ export class GoalBridge {
     pi.registerTool(tool);
   }
 
-  reset(): void { this.checkpoint = undefined; }
+  reset(): void { this.checkpoint = undefined; this.setAvailable(false); }
+
+  private setAvailable(available: boolean): void {
+    this.available = available;
+    const active = this.pi.getActiveTools().filter(name => name !== "taskmesh_goal");
+    this.pi.setActiveTools(available ? [...active, "taskmesh_goal"] : active);
+  }
 
   beforeStart(event: unknown): boolean {
     this.reset();
@@ -51,15 +58,18 @@ export class GoalBridge {
         d?.version !== 3 || d.kind !== "checkpoint" ||
         ![d.goalId, d.generation, d.dispatchId].every(v => typeof v === "string" && v.length > 0 && v.length <= 256)) return false;
     this.checkpoint = { goalId: d.goalId as string, generation: d.generation as string, dispatchId: d.dispatchId as string };
+    this.setAvailable(true);
     return true;
   }
 
   private async execute(ctx: GoalContext, signal?: AbortSignal) {
     const checkpoint = this.checkpoint;
+    const available = this.available;
+    this.setAvailable(false);
     let waiting = false;
     const response = (text: string) => ({ content: [{ type: "text" as const, text }], details: {}, terminate: waiting });
-    if (!checkpoint || !this.agents.enabled || this.busy || !ctx.executeTool) {
-      return response("TaskMesh Goal delegation unavailable: requires this turn's Goal checkpoint, automatic mode, and native nested tool support. Continue under the Goal policy.");
+    if (!available || !checkpoint || !this.agents.enabled || this.busy || !ctx.executeTool) {
+      return response("TaskMesh Goal delegation unavailable: requires an unused native Goal checkpoint, automatic mode, and native nested tool support. Do not call taskmesh_goal again in this run; continue with the main agent under the Goal policy.");
     }
     this.busy = true;
     const invoke = ctx.executeTool.bind(ctx);

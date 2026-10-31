@@ -6,7 +6,7 @@ import { GoalBridge } from "../../src/goal-bridge.ts";
 globalThis.fetch = async () => { throw new Error("Unexpected network request in Goal tool fixture"); };
 
 export default function (pi) {
-  const report = { requests: 0, spawns: 0, calls: [], declared: [], results: [], customMessages: [] };
+  const report = { requests: 0, spawns: 0, calls: [], toolCalls: [], declared: [], results: [], customMessages: [] };
   const goal = { id: "existing-goal", objective: "Finish the remaining replay feature", status: "active", autoContinue: true,
     currentTaskId: "replay", usage: { tokensUsed: 3000000, activeSeconds: 2400 },
     taskList: { tasks: [{ id: "baseline", title: "Baseline", status: "complete" }, { id: "replay", title: "Replay", status: "pending" }],
@@ -33,19 +33,24 @@ export default function (pi) {
     },
   });
   pi.on("session_start", (_event, ctx) => {
+    bridge.reset();
     goal.scheduler.owner = ctx.sessionManager.getSessionId();
     report.active = pi.getActiveTools();
     report.exposure = pi.getAllTools().find(t => t.name === "taskmesh_goal")?.exposure;
     save();
   });
   pi.on("before_agent_start", () => {
-    bridge.beforeStart({ messageType: "custom", message: { role: "custom", customType: "pi-goal-event",
-      details: { version: 3, kind: "checkpoint", goalId: goal.id, generation: "generation", dispatchId: "dispatch" } } });
+    const trigger = process.env.TASKMESH_HOST_TRIGGER || "checkpoint";
+    bridge.beforeStart(trigger === "user" ? { messageType: "user", prompt: "Continue authorized work" } :
+      { messageType: "custom", message: { role: "custom", customType: "pi-goal-event",
+        details: { version: 3, kind: trigger === "completion" ? "completion" : "checkpoint", goalId: goal.id,
+          generation: "generation", dispatchId: trigger === "malformed" ? "" : "dispatch" } } });
   });
   pi.on("message_start", event => {
     if (event.message.role === "custom") report.customMessages.push(event.message.customType);
     save();
   });
+  pi.on("tool_call", event => { report.toolCalls.push(event.toolName); save(); });
   pi.on("tool_result", event => {
     report.results.push({ name: event.toolName, content: event.content, isError: event.isError }); save();
   });
@@ -55,12 +60,13 @@ export default function (pi) {
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }],
     streamSimple(model, context) {
       report.requests++; report.declared.push(getCurrentTools(context.messages).map(t => t.name));
-      report.hint = getCurrentSystemPrompt(context.messages); save();
+      if (report.requests === 1) report.hint = getCurrentSystemPrompt(context.messages);
+      save();
       const stream = createAssistantMessageEventStream();
       const name = process.env.TASKMESH_HOST_ENTRY;
       const script = "text(ALL_TOOLS.filter(t => t.name === 'taskmesh_goal')); try {text(await tools.taskmesh_goal({}));} catch(e) {text(String(e));}";
       const toolCall = { type: "toolCall", id: "owned-call", name, arguments: name === "codemode" ? { code: script } : {} };
-      const first = report.requests === 1;
+      const first = report.requests === 1 && getCurrentTools(context.messages).some(t => t.name === name);
       const message = { role: "assistant", content: [], api: model.api, provider: model.provider, model: model.id,
         timestamp: Date.now(), stopReason: "pending", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };

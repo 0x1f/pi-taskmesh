@@ -112,7 +112,7 @@ Jev 判断合适的请求是否需要委派，并为各子任务选择模型；P
 
 **以前创建、尚未完成的 Goal 也能使用，不需要重建或迁移。** 在安全时点重新加载扩展，下一次原生 checkpoint 会读取同一个 Goal ID、已完成项的证据、当前任务和累计用量。TaskMesh 将当前任务及既有进度交给规划器，不重置它们，也不会自行重跑已完成步骤。暂停的 Goal 仍由用户通过 Goal 原生命令恢复，已完成的 Goal 不会重新打开。下面的等待策略和预算限制同样适用于旧 Goal。
 
-`taskmesh_goal` 必须由模型**单独直接调用**，不能在 `codemode` 中执行 `tools.taskmesh_goal()`，它也不是斜杠命令。它的 model-only 暴露方式有意不加入 `ALL_TOOLS` 或 codemode 发现列表，以保留原生结束轮次/等待语义；已测试的 Pi-Bolt 在 codemode 的 `on` 和 `only` 模式下都会直接声明它。如果模型实际收到的工具声明中没有它，应重新加载/检查扩展，不要尝试嵌套调用或 shell 替代。0.8.1 还修正了原生 `ctx.executeTool` 返回值封装；0.8.0 可能将有效的既有 Goal 错判为过期。
+`taskmesh_goal` 必须由模型**单独直接调用**，不能在 `codemode` 中执行 `tools.taskmesh_goal()`，它也不是斜杠命令。它的 model-only 暴露方式有意不加入 `ALL_TOOLS` 或 codemode 发现列表，以保留原生结束轮次/等待语义；已测试的 Pi-Bolt 在 codemode 的 `on` 和 `only` 模式下，仅在符合条件的原生检查点直接声明它。普通轮次及首次调用后（包括拒绝委派）都会隐藏该工具；新检查点重新开放一次判断机会。如果在尚未使用的有效检查点中仍缺少声明，应重新加载/检查扩展，并按 Goal 策略继续，不要尝试嵌套调用或 shell 替代。0.8.1 还修正了原生 `ctx.executeTool` 返回值封装；0.8.0 可能将有效的既有 Goal 错判为过期。
 
 `taskmesh_goal` 返回 `resume` 只表示把剩余工作交回主代理，不会更新任务或完成 Goal。主代理必须推进获授权的下一步，用 `update_goal_task` 和证据登记已核实的任务，再在所有要求通过后调用 `update_goal({status: "complete"})` 提交完成审查；仅回复“检查点确认、无变化”不能完成目标。
 
